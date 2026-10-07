@@ -1,0 +1,31 @@
+# Environment / secrets
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local data
+*.db
+*.db-shm
+*.db-wal
+
+# Logs
+*.log
+
+# Local application/runtime data
+.local/
+
+# Database backups
+*.db

@@ -1,0 +1,10 @@
+.git
+.env
+*.db
+*.db-shm
+*.db-wal
+__pycache__
+*.pyc
+tests
+README.md
+.local

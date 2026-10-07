@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#111618">
+  <title>Homelab Status</title>
+  <link rel="stylesheet" href="/style.css">
+  <script defer src="/app.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark" aria-hidden="true"></span><strong>STATUS</strong><span class="brand-sub">Homelab</span></div>
+    <nav aria-label="Main navigation"><a href="/" id="public-link">Overview</a><a href="/admin" id="admin-link">Admin</a></nav>
+  </header>
+  <main>
+    <section id="overview-view">
+      <div class="page-head"><div><div class="eyebrow">SYSTEM OVERVIEW</div><h1>Service status</h1></div><div class="update" id="updated">Connecting…</div></div>
+      <div class="overall" id="overall"><span class="status-dot unknown"></span><div><strong>Checking status</strong><small>Waiting for the latest monitoring data</small></div></div>
+      <section class="section"><div class="section-head"><h2>Services</h2><span id="service-count"></span></div>
+        <div class="table-wrap"><table class="services"><thead><tr><th>Service</th><th>Status</th><th>30 day uptime</th><th>Response</th><th>Last checked</th></tr></thead><tbody id="services-body"></tbody></table></div>
+      </section>
+      <section class="section"><div class="section-head"><h2>30 day history</h2><span>Oldest → newest</span></div><div id="history-list" class="history-list"></div><div class="history-legend"><span><i class="bar good"></i> Operational</span><span><i class="bar warn"></i> Degraded</span><span><i class="bar bad"></i> Down</span><span><i class="bar empty"></i> No data</span></div></section>
+      <section class="section"><div class="section-head"><h2>Recent incidents</h2><span>Latest 20</span></div><div id="incidents-list" class="incidents-list"></div></section>
+    </section>
+    <section id="admin-view" hidden>
+      <div class="page-head"><div><div class="eyebrow">CONFIGURATION</div><h1>Administration</h1></div><button id="logout" class="subtle" hidden>Sign out</button></div>
+      <form id="login-form" class="login-panel"><h2>Sign in</h2><p>Enter the administrator credentials configured for this instance.</p><label>Username<input name="username" autocomplete="username" required></label><label>Password<input name="password" type="password" autocomplete="current-password" required></label><button type="submit">Sign in</button><p class="form-message" id="login-message" role="status"></p></form>
+      <div id="admin-content" hidden>
+        <div class="section-head admin-head"><h2>Monitors</h2><button id="add-monitor">Add monitor</button></div>
+        <div class="table-wrap"><table class="admin-table"><thead><tr><th>Name</th><th>Type</th><th>Status</th><th>Interval</th><th>Enabled</th><th class="actions">Actions</th></tr></thead><tbody id="admin-monitors"></tbody></table></div>
+        <form id="monitor-form" class="editor" hidden><div class="section-head"><h2 id="editor-title">Add monitor</h2><button type="button" class="subtle" id="cancel-edit">Cancel</button></div>
+          <div class="form-grid"><label>Name<input name="name" maxlength="80" required></label><label>Description<input name="description" maxlength="240"></label><label>Type<select name="type"><option value="http">HTTP</option><option value="https">HTTPS</option><option value="tcp">TCP</option><option value="docker">Docker Container</option></select></label><label id="target-label">Target<input name="target" placeholder="https://service.example/health" required></label><label id="docker-target-label" hidden>Container<select name="docker_target" disabled required><option value="">Select a container</option></select><span class="field-note" id="docker-selection-note"></span></label><label>Interval (seconds)<input name="interval" type="number" min="10" max="3600" value="60" required></label><label id="timeout-label">Timeout (seconds)<input name="timeout" type="number" min="1" max="30" value="5" required></label><label id="threshold-label">Failure threshold<input name="threshold" type="number" min="1" max="10" value="3" required></label><label class="check-label"><input name="enabled" type="checkbox" checked> Enabled</label></div>
+          <div id="docker-controls" class="docker-controls" hidden><button type="button" class="subtle" id="refresh-containers">Refresh containers</button><span class="field-note">Only container state and Docker health status are read.</span></div>
+          <div class="form-actions"><button type="submit">Save monitor</button><span class="form-message" id="monitor-message" role="status"></span></div>
+        </form>
+        <section class="section"><div class="section-head"><h2 id="details-title">Monitor history</h2><span>Last 200 checks</span></div><div id="check-history" class="detail-list muted">Select History on a monitor.</div></section>
+        <section class="section"><div class="section-head"><h2>Incident log</h2><span>Latest 100</span></div><div id="admin-incidents" class="incidents-list"></div></section>
+      </div>
+    </section>
+  </main>
+  <footer>Homelab status <span>·</span> Checks run independently of this page</footer>
+</body>
+</html>

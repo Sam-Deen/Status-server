@@ -1,0 +1,260 @@
+const $ = id => document.getElementById(id);
+let csrf = null;
+let monitors = [];
+let editing = null;
+const label = {operational:'Operational', degraded:'Degraded', down:'Down', unknown:'Unknown'};
+
+function el(tag, className, value) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (value !== undefined) node.textContent = value;
+  return node;
+}
+function clear(node) { node.replaceChildren(); }
+function stamp(value) { return value ? new Date(value).toLocaleString(undefined, {dateStyle:'medium', timeStyle:'short'}) : 'Never'; }
+function ago(value) {
+  if (!value) return 'Never';
+  const sec = Math.max(0, Math.round((Date.now() - new Date(value).getTime())/1000));
+  if (sec < 60) return `${sec}s ago`;
+  if (sec < 3600) return `${Math.floor(sec/60)}m ago`;
+  if (sec < 86400) return `${Math.floor(sec/3600)}h ago`;
+  return `${Math.floor(sec/86400)}d ago`;
+}
+function duration(start, end) {
+  const sec = Math.max(0, Math.round((new Date(end || Date.now()) - new Date(start))/1000));
+  if (sec < 60) return `${sec}s`;
+  if (sec < 3600) return `${Math.floor(sec/60)}m ${sec%60}s`;
+  if (sec < 86400) return `${Math.floor(sec/3600)}h ${Math.floor(sec%3600/60)}m`;
+  return `${Math.floor(sec/86400)}d ${Math.floor(sec%86400/3600)}h`;
+}
+function statusNode(status) {
+  const box = el('span', 'status-cell');
+  box.append(el('i', `status-dot ${status}`), el('span', `status-text ${status}`, label[status] || 'Unknown'));
+  return box;
+}
+function dockerDetail(m) {
+  const state = m.container_state || m.docker_state || 'unknown';
+  if (state === 'missing') return 'Container not found';
+  if (state === 'unknown') return 'Docker state unavailable';
+  const health = m.docker_health || 'unknown';
+  const healthText = health === 'none' ? 'No health check' : `Health: ${health}`;
+  return `${state[0].toUpperCase() + state.slice(1)} · ${healthText}`;
+}
+function empty(node, message) { clear(node); node.append(el('div', 'empty-state', message)); }
+async function api(path, options = {}) {
+  const headers = {...options.headers};
+  if (options.body) headers['Content-Type'] = 'application/json';
+  if (csrf && options.method && options.method !== 'GET') headers['X-CSRF-Token'] = csrf;
+  const response = await fetch(path, {...options, headers, credentials:'same-origin'});
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || `Request failed (${response.status})`);
+  return data;
+}
+async function refreshPublic() {
+  try {
+    const data = await api('/api/status');
+    const count = data.monitors.length;
+    $('service-count').textContent = `${count} monitor${count === 1 ? '' : 's'}`;
+    $('updated').textContent = `Updated ${ago(data.updated_at)}`;
+    const overall = $('overall');
+    overall.className = `overall ${data.overall}`;
+    clear(overall);
+    const copy = el('div');
+    const message = {operational:'All systems operational', degraded:'Some services degraded', down:'Service disruption detected', unknown:'Status unavailable'}[data.overall];
+    copy.append(el('strong', '', message), el('small', '', count ? `${count} service${count === 1 ? '' : 's'} monitored` : 'No monitors configured yet'));
+    overall.append(el('i', `status-dot ${data.overall}`), copy);
+    const body = $('services-body'); clear(body);
+    for (const m of data.monitors) {
+      const tr = el('tr');
+      const name = el('td'); name.append(el('div','service-name',m.name));
+      if (m.description) name.append(el('div','service-description',m.description));
+      if (m.type === 'docker') {
+        name.append(el('div','service-description',`Container: ${m.container_name} · ${dockerDetail(m)}`));
+        if (m.last_state_change) name.append(el('div','service-description',`State changed ${stamp(m.last_state_change)}`));
+      }
+      const state = el('td'); state.append(statusNode(m.status));
+      if ((m.status === 'down' || m.status === 'degraded') && m.state_since)
+        state.append(el('div','state-duration',`for ${duration(m.state_since)}`));
+      tr.append(name, state, el('td','numeric',m.uptime === null ? '—' : `${m.uptime.toFixed(2)}%`),
+        el('td','numeric',m.response_ms === null ? '—' : `${m.response_ms} ms`),
+        el('td','muted',ago(m.last_checked)));
+      body.append(tr);
+    }
+    if (!count) { const tr = el('tr'); const td = el('td','empty-state','No services are monitored yet. Sign in to Admin to add one.'); td.colSpan=5; tr.append(td); body.append(tr); }
+    const histories = $('history-list'); clear(histories);
+    if (!count) empty(histories, 'History appears after the first checks.');
+    for (const m of data.monitors) {
+      const row = el('div','history-row'); const bars = el('div','bars');
+      for (const day of m.history) {
+        const kind = day.uptime === null ? 'empty' : day.uptime >= 99 ? 'good' : day.uptime >= 50 ? 'warn' : 'bad';
+        const bar = el('i',`bar ${kind}`);
+        bar.title = `${day.day}: ${day.uptime === null ? 'No data' : `${day.uptime}% uptime`}`;
+        bars.append(bar);
+      }
+      row.append(el('div','history-name',m.name), bars, el('div','history-uptime',m.uptime === null ? '—' : `${m.uptime.toFixed(2)}%`));
+      histories.append(row);
+    }
+    renderIncidents($('incidents-list'), data.incidents);
+  } catch (err) { $('updated').textContent = 'Connection unavailable'; }
+}
+function renderIncidents(node, incidents) {
+  clear(node);
+  if (!incidents.length) return empty(node, 'No recent incidents.');
+  for (const i of incidents) {
+    const row = el('div','incident-row');
+    const service = el('div'); service.append(el('span',`status-text ${i.severity}`,`${i.monitor_name} ${i.severity === 'down' ? 'unavailable' : 'degraded'}`));
+    row.append(el('div','time',stamp(i.started_at)), service,
+      el('div','duration',i.ended_at ? duration(i.started_at,i.ended_at) : `Ongoing · ${duration(i.started_at)}`));
+    node.append(row);
+  }
+}
+function route() {
+  const admin = location.pathname === '/admin';
+  $('overview-view').hidden = admin; $('admin-view').hidden = !admin;
+  $('public-link').classList.toggle('active',!admin); $('admin-link').classList.toggle('active',admin);
+  if (admin) loadAdmin(); else refreshPublic();
+}
+async function loadAdmin() {
+  try {
+    const me = await api('/api/admin/me');
+    csrf = me.csrf;
+    $('login-form').hidden = me.authenticated;
+    $('admin-content').hidden = !me.authenticated;
+    $('logout').hidden = !me.authenticated;
+    if (me.authenticated) await refreshAdmin();
+  } catch (err) { $('login-message').textContent = 'Cannot reach the application.'; }
+}
+async function refreshAdmin() {
+  try {
+    const [m, i] = await Promise.all([api('/api/admin/monitors'), api('/api/admin/incidents')]);
+    monitors = m.monitors; renderAdminMonitors(); renderIncidents($('admin-incidents'), i.incidents);
+  } catch (err) { $('monitor-message').textContent = err.message; }
+}
+function renderAdminMonitors() {
+  const body = $('admin-monitors'); clear(body);
+  if (!monitors.length) { const tr=el('tr'); const td=el('td','empty-state','No monitors yet. Add one to start checking a service.'); td.colSpan=6;tr.append(td);body.append(tr); }
+  for (const m of monitors) {
+    const tr=el('tr');const name=el('td');name.append(el('div','service-name',m.name));
+    if (m.type === 'docker') {
+      name.append(el('div','service-description',`${m.target} · ${dockerDetail(m)}`));
+      if (m.docker_health === 'none' && m.docker_state !== 'missing') name.append(el('div','service-description','Only container state is monitored'));
+      if (m.docker_state_since) name.append(el('div','service-description',`State changed ${stamp(m.docker_state_since)}`));
+    }
+    const state=el('td');state.append(statusNode(m.enabled ? m.status : 'unknown'));
+    const actions=el('td','actions'); const group=el('div','action-group');
+    for (const [title,callback,style] of [
+      ['History',()=>showHistory(m),'subtle'],['Edit',()=>openEditor(m),'subtle'],
+      [m.enabled?'Disable':'Enable',()=>toggleMonitor(m),'subtle'],['Delete',()=>deleteMonitor(m),'subtle danger']]) {
+      const b=el('button',style,title);b.type='button';b.addEventListener('click',callback);group.append(b);
+    }
+    actions.append(group);
+    tr.append(name,el('td','muted',m.type === 'docker' ? 'Docker' : m.type.toUpperCase()),state,el('td','numeric',`${m.interval}s`),
+      el('td','muted',m.enabled?'Yes':'No'),actions);body.append(tr);
+  }
+}
+function openEditor(m=null) {
+  editing=m?.id ?? null;
+  const form=$('monitor-form');form.reset();form.hidden=false;
+  $('editor-title').textContent=m?'Edit monitor':'Add monitor';$('monitor-message').textContent='';
+  if (m) for (const key of ['name','description','type','target','interval','timeout','threshold']) form.elements[key].value=m[key];
+  form.elements.enabled.checked=m?Boolean(m.enabled):true;
+  syncMonitorType(m?.type === 'docker' ? m.target : '');
+  form.scrollIntoView({behavior:'smooth',block:'nearest'});
+}
+function syncMonitorType(selected='') {
+  const form=$('monitor-form');
+  const docker=form.elements.type.value==='docker';
+  $('target-label').hidden=docker;
+  $('docker-target-label').hidden=!docker;
+  $('docker-controls').hidden=!docker;
+  $('timeout-label').hidden=docker;
+  $('threshold-label').hidden=docker;
+  form.elements.target.disabled=docker;
+  form.elements.docker_target.disabled=!docker;
+  if (docker) loadDockerChoices(selected);
+}
+async function loadDockerChoices(selected='') {
+  const select=$('monitor-form').elements.docker_target;
+  clear(select);
+  const loading=el('option','', 'Discovering containers…'); loading.value=''; select.append(loading);
+  $('docker-selection-note').textContent='';
+  try {
+    const data=await api('/api/admin/containers');
+    if ($('monitor-form').elements.type.value!=='docker') return;
+    clear(select);
+    const placeholder=el('option','','Select a container');placeholder.value='';select.append(placeholder);
+    for (const c of data.containers) {
+      const option=el('option','',`${c.name} · ${c.state} · ${c.health === 'none' ? 'no health check' : c.health}`);
+      option.value=c.name; select.append(option);
+    }
+    if (selected && !data.containers.some(c=>c.name===selected)) {
+      const missing=el('option','',`${selected} · currently unavailable`);missing.value=selected;select.append(missing);
+    }
+    select.value=selected || '';
+    if (!data.containers.length) $('docker-selection-note').textContent='No containers discovered.';
+    updateDockerSelectionNote(data.containers);
+  } catch(err) {
+    clear(select);
+    if (selected) {const option=el('option','',`${selected} · discovery unavailable`);option.value=selected;select.append(option);select.value=selected;}
+    else {const option=el('option','','Docker discovery unavailable');option.value='';select.append(option);}
+    $('docker-selection-note').textContent=err.message;
+  }
+}
+function updateDockerSelectionNote(containers) {
+  const selected=$('monitor-form').elements.docker_target.value;
+  const item=containers.find(c=>c.name===selected);
+  if (item) $('docker-selection-note').textContent=item.health==='none'
+    ? 'No Docker HEALTHCHECK. Only container running or stopped state is monitored.'
+    : `Docker health: ${item.health}. Last state change: ${stamp(item.state_since)}.`;
+}
+function monitorPayload(m) { return {name:m.name,description:m.description,type:m.type,target:m.target,interval:m.interval,timeout:m.timeout,threshold:m.threshold,enabled:Boolean(m.enabled)}; }
+async function toggleMonitor(m) {
+  try { await api(`/api/admin/monitors/${m.id}`,{method:'PUT',body:JSON.stringify({...monitorPayload(m),enabled:!m.enabled})}); await refreshAdmin(); }
+  catch(err){alert(err.message);}
+}
+async function deleteMonitor(m) {
+  if (!confirm(`Delete ${m.name} and its history?`)) return;
+  try { await api(`/api/admin/monitors/${m.id}`,{method:'DELETE'}); await refreshAdmin(); }
+  catch(err){alert(err.message);}
+}
+async function showHistory(m) {
+  $('details-title').textContent=`${m.name} · recent checks`;
+  const node=$('check-history');node.textContent='Loading…';
+  try {
+    const data=await api(`/api/admin/monitors/${m.id}/history`);clear(node);
+    if (!data.checks.length) return empty(node,'No checks recorded yet.');
+    for (const c of data.checks) {
+      const row=el('div','detail-row');row.append(el('span','muted',stamp(c.checked_at)),
+        el('span',`status-text ${c.status}`,label[c.status]),el('span','numeric',c.response_ms===null?'—':`${c.response_ms} ms`));node.append(row);
+    }
+  } catch(err){node.textContent=err.message;}
+  node.scrollIntoView({behavior:'smooth',block:'nearest'});
+}
+$('login-form').addEventListener('submit',async event=>{
+  event.preventDefault();const form=event.currentTarget;$('login-message').textContent='';
+  try {const data=await api('/api/admin/login',{method:'POST',body:JSON.stringify({username:form.elements.username.value,password:form.elements.password.value})});csrf=data.csrf;form.reset();await loadAdmin();}
+  catch(err){$('login-message').textContent=err.message;}
+});
+$('logout').addEventListener('click',async()=>{try{await api('/api/admin/logout',{method:'POST'});csrf=null;await loadAdmin();}catch(err){alert(err.message);}});
+$('add-monitor').addEventListener('click',()=>openEditor());
+$('monitor-form').elements.type.addEventListener('change',()=>syncMonitorType());
+$('refresh-containers').addEventListener('click',()=>loadDockerChoices($('monitor-form').elements.docker_target.value));
+$('monitor-form').elements.docker_target.addEventListener('change',()=>{
+  const f=$('monitor-form');
+  if (!f.elements.name.value) f.elements.name.value=f.elements.docker_target.value;
+  $('docker-selection-note').textContent='';
+  if (f.elements.docker_target.selectedOptions[0]?.textContent.includes('no health check'))
+    $('docker-selection-note').textContent='No Docker HEALTHCHECK. Only container running or stopped state is monitored.';
+});
+$('cancel-edit').addEventListener('click',()=>{$('monitor-form').hidden=true;editing=null;});
+$('monitor-form').addEventListener('submit',async event=>{
+  event.preventDefault();const f=event.currentTarget;
+  const docker=f.elements.type.value==='docker';
+  const data={name:f.elements.name.value,description:f.elements.description.value,type:f.elements.type.value,
+    target:docker?f.elements.docker_target.value:f.elements.target.value,interval:Number(f.elements.interval.value),
+    timeout:docker?5:Number(f.elements.timeout.value),threshold:docker?1:Number(f.elements.threshold.value),enabled:f.elements.enabled.checked};
+  try {await api(editing?`/api/admin/monitors/${editing}`:'/api/admin/monitors',
+    {method:editing?'PUT':'POST',body:JSON.stringify(data)});f.hidden=true;editing=null;await refreshAdmin();}
+  catch(err){$('monitor-message').textContent=err.message;}
+});
+route();setInterval(()=>{if(location.pathname==='/')refreshPublic();},15000);

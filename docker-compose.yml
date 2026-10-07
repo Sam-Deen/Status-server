@@ -1,0 +1,54 @@
+services:
+  status:
+    build: .
+    image: status-server:local
+    container_name: status-server
+    restart: unless-stopped
+    environment:
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env}
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
+      DB_PATH: /data/status.db
+      PORT: 8080
+      DOCKER_PROXY_URL: http://docker_proxy:8090/containers
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${HOST_PORT:-8088}:8080"
+    volumes:
+      - status_data:/data
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - default
+      - docker_api
+
+  docker_proxy:
+    build:
+      context: .
+      dockerfile: Dockerfile.proxy
+    image: status-docker-proxy:local
+    restart: unless-stopped
+    container_name: status-docker-proxy
+    environment:
+      SELF_CONTAINER_NAME: status-docker-proxy
+      INCLUDE_SELF: ${INCLUDE_PROXY_CONTAINER:-false}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - docker_api
+    read_only: true
+    tmpfs:
+      - /tmp:size=8m,noexec,nosuid
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 64
+
+volumes:
+  status_data:
+
+networks:
+  docker_api:
+    internal: true
