@@ -108,6 +108,19 @@ class StatusTests(unittest.TestCase):
         self.service.update(monitor_id, self.config(name="Renamed", type="docker", target="background-worker"))
         self.assertEqual(self.repository.get(monitor_id).name, "Renamed")
 
+    def test_overall_status_ignores_unknown_monitors_when_known_status_exists(self):
+        self.assertEqual(self.service.public_status()['overall'], 'unknown')
+        known_id = self.service.create(self.config(name='Measured service'))
+        self.service.create(self.config(name='Unmeasured service'))
+        self.assertEqual(self.service.public_status()['overall'], 'unknown')
+        for status in ('operational', 'degraded', 'down', 'unknown'):
+            with self.subTest(status=status):
+                success = None if status == 'unknown' else status == 'operational'
+                self.service.record_result(self.repository.get(known_id), CheckResult(success, status=status))
+                result = self.service.public_status()
+                self.assertEqual(result['overall'], status)
+                self.assertEqual({m['status'] for m in result['monitors']}, {status, 'unknown'})
+
     def test_due_cycle_checks_docker_and_handles_proxy_loss(self):
         config = self.config(name="Background Worker", type="docker", target="background-worker", threshold=1)
         monitor_id = self.service.create(config)

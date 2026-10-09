@@ -6,12 +6,12 @@ from health_contract import instant
 def measured_availability(rows, start: datetime, end: datetime) -> dict:
     totals = {"core": [0.0, 0.0], "full": [0.0, 0.0]}
     block_duration = timedelta(hours=8)
-    severity = {"operational": 0, "unknown": 1, "degraded": 2, "down": 3}
+    severity = {"unknown": -1, "operational": 0, "degraded": 1, "down": 2}
     blocks = []
     cursor = start
     while cursor < end:
         blocks.append({"from": cursor, "to": min(cursor + block_duration, end),
-                       "core": [0.0, 0.0], "full": [0.0, 0.0], "status": "operational"})
+                       "core": [0.0, 0.0], "full": [0.0, 0.0], "status": "unknown"})
         cursor += block_duration
 
     def record_status(block, row):
@@ -66,11 +66,8 @@ def measured_availability(rows, start: datetime, end: datetime) -> dict:
     history = []
     for block in blocks:
         duration = (block["to"] - block["from"]).total_seconds()
-        status = block["status"]
-        if duration - block["full"][1] > 0.000001 and severity[status] < severity["unknown"]:
-            status = "unknown"
         history.append({"from": block["from"].isoformat(), "to": block["to"].isoformat(),
-                        "status": status, "core": report(block["core"], duration),
+                        "status": block["status"], "core": report(block["core"], duration),
                         "full": report(block["full"], duration)})
     return {"core": report(totals["core"], window), "full": report(totals["full"], window),
             "history": history, "from": start.isoformat(), "to": end.isoformat()}

@@ -148,7 +148,7 @@ class MonitorService:
             output.append(item)
         statuses = [item["status"] for item in output]
         overall = ("down" if "down" in statuses else "degraded" if "degraded" in statuses else
-                   "operational" if statuses and all(status == "operational" for status in statuses) else "unknown")
+                   "operational" if "operational" in statuses else "unknown")
         incidents = self.repository.incidents(20, public=True)
         for incident in incidents:
             expiry = observation_expiries.get(incident['monitor_id'])

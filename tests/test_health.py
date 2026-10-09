@@ -140,13 +140,41 @@ class AvailabilityTests(unittest.TestCase):
         result = measured_availability(rows, self.start, self.start + timedelta(hours=16))
         self.assertEqual([block['status'] for block in result['history']], ['unknown', 'down'])
 
-    def test_monitoring_gaps_and_unknown_samples_do_not_show_green(self):
+    def test_monitoring_gaps_and_unknown_samples_preserve_known_operational_status(self):
         for rows in ([self.row(0, True, True)],
-                     [self.row(0, True, True), self.row(60, None, None)],
+                     [self.row(0, True, True), self.row(60, None, None)]):
+            with self.subTest(rows=rows):
+                result = measured_availability(rows, self.start, self.start + timedelta(seconds=240))
+                self.assertEqual(result['history'][0]['status'], 'operational')
+                self.assertEqual(result['full']['availability'], 100)
+                self.assertLess(result['full']['coverage'], 100)
+                self.assertGreater(result['full']['unknown_seconds'], 0)
+
+    def test_unknown_only_and_unmeasured_blocks_remain_unknown(self):
+        for rows in ([], [self.row(0, None, None)],
                      [self.row(0, True, None, status='operational')]):
             with self.subTest(rows=rows):
                 result = measured_availability(rows, self.start, self.start + timedelta(seconds=240))
                 self.assertEqual(result['history'][0]['status'], 'unknown')
+                self.assertIsNone(result['full']['availability'])
+                self.assertEqual(result['full']['coverage'], 0)
+
+    def test_unknown_samples_do_not_override_any_known_status(self):
+        for status, core, full in (('operational', True, True),
+                                   ('degraded', True, False), ('down', False, False)):
+            with self.subTest(status=status):
+                rows = [self.row(0, None, None), self.row(60, core, full, status=status),
+                        self.row(120, None, None)]
+                result = measured_availability(rows, self.start, self.start + timedelta(seconds=180))
+                self.assertEqual(result['history'][0]['status'], status)
+                self.assertEqual(result['full']['coverage'], 33.33)
+                self.assertEqual(result['full']['unknown_seconds'], 120)
+
+    def test_missing_data_in_one_block_does_not_override_another_block(self):
+        rows = [self.row(0, True, True), self.row(16 * 3600, True, False)]
+        result = measured_availability(rows, self.start, self.start + timedelta(hours=24))
+        self.assertEqual([block['status'] for block in result['history']],
+                         ['operational', 'unknown', 'degraded'])
 
     def test_legacy_and_same_timestamp_outages_still_color_the_block(self):
         for rows in ([self.row(60, None, None, status='down', interval_seconds=None)],
