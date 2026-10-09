@@ -20,6 +20,11 @@ function ago(value) {
   if (sec < 86400) return `${Math.floor(sec/3600)}h ago`;
   return `${Math.floor(sec/86400)}d ago`;
 }
+function updateLastChecked() {
+  for (const node of document.querySelectorAll('[data-last-checked]')) {
+    node.textContent = ago(node.dataset.lastChecked);
+  }
+}
 function duration(start, end) {
   const sec = Math.max(0, Math.round((new Date(end || Date.now()) - new Date(start))/1000));
   if (sec < 60) return `${sec}s`;
@@ -103,9 +108,11 @@ async function refreshPublic() {
       const state = el('td'); state.append(statusNode(m.status));
       if ((m.status === 'down' || m.status === 'degraded') && m.state_since)
         state.append(el('div','state-duration',`for ${duration(m.state_since)}`));
+      const lastChecked = el('td','muted',ago(m.last_checked));
+      lastChecked.dataset.lastChecked = m.last_checked || '';
       tr.append(name, state, availabilityCell(m),
         el('td','numeric',m.response_ms === null ? '—' : `${m.response_ms} ms`),
-        el('td','muted',ago(m.last_checked)));
+        lastChecked);
       body.append(tr);
     }
     if (!count) { const tr = el('tr'); const td = el('td','empty-state','No services are monitored yet. Sign in to Admin to add one.'); td.colSpan=5; tr.append(td); body.append(tr); }
@@ -289,3 +296,4 @@ $('monitor-form').addEventListener('submit',async event=>{
   catch(err){$('monitor-message').textContent=err.message;}
 });
 route();setInterval(()=>{if(location.pathname==='/')refreshPublic();},15000);
+setInterval(updateLastChecked,1000);
