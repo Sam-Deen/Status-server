@@ -63,7 +63,7 @@ function availabilityCell(m) {
   box.append(el('div', '', 'Core: ' + percentage(a.core.availability)),
     el('div', '', 'Full: ' + percentage(a.full.availability)),
     el('div', 'service-description', 'Coverage core/full: ' + percentage(a.core.coverage) + ' / ' + percentage(a.full.coverage)));
-  box.title = 'Time measured within the last 30 calendar days. Unknown time is excluded and shown as missing coverage. This is not a contractual SLA.';
+  box.title = 'Time measured within the last 30 days. Unknown time is excluded and shown as missing coverage. This is not a contractual SLA.';
   return box;
 }
 function empty(node, message) { clear(node); node.append(el('div', 'empty-state', message)); }
@@ -113,11 +113,11 @@ async function refreshPublic() {
     if (!count) empty(histories, 'History appears after the first checks.');
     for (const m of data.monitors) {
       const row = el('div','history-row'); const bars = el('div','bars');
-      for (const day of (m.measured_availability?.history || [])) {
-        day.uptime = day.full.availability;
-        const kind = day.uptime === null ? 'empty' : day.uptime >= 99 ? 'good' : day.uptime >= 50 ? 'warn' : 'bad';
+      for (const block of (m.measured_availability?.history || [])) {
+        const kind = {operational:'good', degraded:'warn', down:'bad', unknown:'empty'}[block.status] || 'empty';
         const bar = el('i',`bar ${kind}`);
-        bar.title = day.day + ': full ' + percentage(day.uptime) + ' · coverage ' + percentage(day.full.coverage);
+        bar.title = stamp(block.from) + ' – ' + stamp(block.to) + ': ' + (label[block.status] || 'Unknown') +
+          ' · full ' + percentage(block.full.availability) + ' · coverage ' + percentage(block.full.coverage);
         bars.append(bar);
       }
       row.append(el('div','history-name',m.name), bars, el('div','history-uptime',percentage(m.measured_availability?.full.availability)));

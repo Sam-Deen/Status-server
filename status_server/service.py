@@ -121,7 +121,7 @@ class MonitorService:
                              "last_state_change": monitor.docker_state_since})
             cache = self.availability_cache.get(monitor.id)
             if cache is None or time.monotonic() - cache[0] >= 30:
-                start = datetime.combine(today - timedelta(days=29), datetime.min.time(), timezone.utc)
+                start = now - timedelta(days=30)
                 availability = self.repository.availability(monitor.id, start, now)
                 self.availability_cache[monitor.id] = (time.monotonic(), availability)
             else:

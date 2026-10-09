@@ -73,9 +73,18 @@ compatibility; the dashboard now uses the explicitly time-weighted metrics below
 ## Availability and missing time
 
 Availability is an observation-based measurement, **not a contractual SLA**.
-The dashboard displays the last 30 calendar days, including the partial current
-day, in UTC. Each metric reports availability, coverage, measured seconds,
-available seconds and unknown seconds, with daily history.
+The dashboard displays a rolling 30-day window in 90 consecutive eight-hour
+blocks. Each metric reports availability, coverage, measured seconds,
+available seconds and unknown seconds. Each entry in
+`measured_availability.history` contains `from`/`to` timestamps, core/full
+measurements and the worst observed `status` in that block. Tooltips display
+the time range in the viewer's local timezone.
+
+Block colors follow status severity, not an availability percentage: Down takes
+precedence over Degraded, then Unknown, then Operational. Even one minute of
+observed downtime makes its block red after recovery. Monitoring gaps make an
+otherwise Operational block Unknown; they do not hide observed downtime or
+degradation. Availability percentages remain time-weighted.
 
 - **Core availability:** available measured seconds / known core measured
   seconds. A detailed Degraded snapshot can count as available when the
@@ -99,8 +108,9 @@ after expiry, or during an unobserved restart/maintenance interval remains Unkno
 There is no assumption that unobserved planned downtime was successful or failed.
 
 Older check rows have no recorded validity/interval or explicit core evidence.
-They remain in history and legacy check-count metrics but are excluded from new
-time-weighted measurements; no retroactive duration is invented. New historical
+Their recorded statuses still determine history block colors and they remain in
+legacy check-count metrics, but are excluded from time-weighted measurements;
+no retroactive duration is invented. New historical
 intervals survive later monitor interval edits because each check records its
 own interval. The public current status becomes Unknown if worker observations
 are older than twice the monitor interval, even when the web server still works.

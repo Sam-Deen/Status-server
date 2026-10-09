@@ -228,7 +228,7 @@ class MonitorRepository:
     def availability(self, monitor_id: int, start: datetime, end: datetime) -> dict:
         from .availability import measured_availability
         with self.database.connection() as db:
-            rows = db.execute("""SELECT checked_at,interval_seconds,valid_until,core_available,full_available
+            rows = db.execute("""SELECT checked_at,interval_seconds,valid_until,status,core_available,full_available
                                  FROM checks WHERE monitor_id=? AND checked_at>=? ORDER BY checked_at,id""",
                               (monitor_id, (start - timedelta(hours=2)).isoformat()))
             return measured_availability(rows, start, end)

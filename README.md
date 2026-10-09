@@ -4,7 +4,7 @@ Status Server is a self hosted status page for HTTP, HTTPS, TCP, and Docker cont
 
 ## Features and monitor types
 
-- Public, automatically updating status page with response times, recent incidents, and compact uptime history.
+- Public, automatically updating status page with response times, recent incidents, and 90 eight-hour history blocks across the last 30 days. Each block shows the worst observed status, so brief outages remain visible after recovery.
 - Administrator controls for adding, editing, disabling, and deleting monitors.
 - HTTP and HTTPS checks: GET request; 2xx and 3xx are healthy, redirects are not followed.
 - TCP checks: verifies that a connection opens to `host:port`.

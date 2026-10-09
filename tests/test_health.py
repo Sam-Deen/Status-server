@@ -64,7 +64,8 @@ class AvailabilityTests(unittest.TestCase):
 
     def row(self, seconds, core, full, **changes):
         row = {'checked_at': (self.start + timedelta(seconds=seconds)).isoformat(),
-               'core_available': core, 'full_available': full, 'interval_seconds': 60, 'valid_until': None}
+               'core_available': core, 'full_available': full, 'interval_seconds': 60, 'valid_until': None,
+               'status': 'operational' if full else 'degraded' if core else 'down' if core is False else 'unknown'}
         row.update(changes)
         return row
 
@@ -96,10 +97,63 @@ class AvailabilityTests(unittest.TestCase):
         result = measured_availability(rows, self.start, self.start + timedelta(seconds=60))
         self.assertEqual(result['core']['measured_seconds'], 10)
 
-    def test_daily_boundaries_split_time_correctly(self):
-        self.start = datetime(2026, 10, 9, 23, 59, 50, tzinfo=timezone.utc)
-        result = measured_availability([self.row(0, True, True)], self.start, self.start + timedelta(seconds=20))
-        self.assertEqual([day['core']['measured_seconds'] for day in result['history']], [10, 10])
+    def test_thirty_days_have_ninety_eight_hour_blocks(self):
+        end = self.start + timedelta(days=30)
+        history = measured_availability([], self.start, end)['history']
+        self.assertEqual(len(history), 90)
+        self.assertEqual(history[0]['from'], self.start.isoformat())
+        self.assertEqual(history[-1]['to'], end.isoformat())
+        for index, block in enumerate(history):
+            self.assertEqual(datetime.fromisoformat(block['to']) - datetime.fromisoformat(block['from']),
+                             timedelta(hours=8))
+            self.assertEqual(block['status'], 'unknown')
+            if index:
+                self.assertEqual(history[index - 1]['to'], block['from'])
+
+    def test_one_minute_outage_stays_down_after_the_day_ends(self):
+        end = self.start + timedelta(days=2)
+        rows = [self.row(seconds, True, True, interval_seconds=3600)
+                for seconds in range(0, 2 * 86400, 3600)]
+        rows.extend([self.row(3600, False, False),
+                     self.row(3660, True, True, interval_seconds=3600)])
+        rows.sort(key=lambda row: row['checked_at'])
+        result = measured_availability(rows, self.start, end)
+        self.assertEqual(result['history'][0]['status'], 'down')
+        self.assertGreater(result['history'][0]['full']['availability'], 99)
+        self.assertEqual([block['status'] for block in result['history'][1:]], ['operational'] * 5)
+
+    def test_brief_degradation_is_not_colored_by_availability(self):
+        rows = [self.row(0, True, True), self.row(60, False, False, status='degraded'),
+                self.row(61, True, True)]
+        result = measured_availability(rows, self.start, self.start + timedelta(seconds=120))
+        self.assertGreater(result['full']['availability'], 99)
+        self.assertEqual(result['history'][0]['status'], 'degraded')
+
+    def test_outage_crossing_block_boundary_affects_both_blocks(self):
+        rows = [self.row(8 * 3600 - 30, False, False), self.row(8 * 3600 + 30, True, True)]
+        result = measured_availability(rows, self.start, self.start + timedelta(hours=16))
+        self.assertEqual([block['status'] for block in result['history']], ['down', 'down'])
+        self.assertEqual([block['full']['measured_seconds'] for block in result['history']], [30, 150])
+
+    def test_outage_at_boundary_does_not_affect_previous_block(self):
+        rows = [self.row(8 * 3600, False, False)]
+        result = measured_availability(rows, self.start, self.start + timedelta(hours=16))
+        self.assertEqual([block['status'] for block in result['history']], ['unknown', 'down'])
+
+    def test_monitoring_gaps_and_unknown_samples_do_not_show_green(self):
+        for rows in ([self.row(0, True, True)],
+                     [self.row(0, True, True), self.row(60, None, None)],
+                     [self.row(0, True, None, status='operational')]):
+            with self.subTest(rows=rows):
+                result = measured_availability(rows, self.start, self.start + timedelta(seconds=240))
+                self.assertEqual(result['history'][0]['status'], 'unknown')
+
+    def test_legacy_and_same_timestamp_outages_still_color_the_block(self):
+        for rows in ([self.row(60, None, None, status='down', interval_seconds=None)],
+                     [self.row(60, False, False), self.row(60, True, True)]):
+            with self.subTest(rows=rows):
+                result = measured_availability(rows, self.start, self.start + timedelta(hours=8))
+                self.assertEqual(result['history'][0]['status'], 'down')
 
 
 class IntegrationTests(unittest.TestCase):
@@ -123,6 +177,8 @@ class IntegrationTests(unittest.TestCase):
         self.service.check_due()
         item = self.service.public_status()['monitors'][0]
         self.assertEqual(item['status'], 'degraded')
+        self.assertEqual(len(item['measured_availability']['history']), 90)
+        self.assertEqual(item['measured_availability']['history'][-1]['status'], 'degraded')
         self.assertEqual(item['application_health']['components']['gameApi']['status'], 'down')
         history = self.repository.history(self.ident)
         self.assertEqual(history[0]['core_available'], 1)

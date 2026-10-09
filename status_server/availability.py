@@ -1,11 +1,25 @@
 """Time-weighted availability over bounded observations, with explicit coverage."""
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from health_contract import instant
 
 
 def measured_availability(rows, start: datetime, end: datetime) -> dict:
     totals = {"core": [0.0, 0.0], "full": [0.0, 0.0]}
-    daily = {}
+    block_duration = timedelta(hours=8)
+    severity = {"operational": 0, "unknown": 1, "degraded": 2, "down": 3}
+    blocks = []
+    cursor = start
+    while cursor < end:
+        blocks.append({"from": cursor, "to": min(cursor + block_duration, end),
+                       "core": [0.0, 0.0], "full": [0.0, 0.0], "status": "operational"})
+        cursor += block_duration
+
+    def record_status(block, row):
+        status = row["status"]
+        if status == "operational" and row["interval_seconds"] and row["full_available"] is None:
+            status = "unknown"
+        if severity[status] > severity[block["status"]]:
+            block["status"] = status
 
     def accumulate(row, next_at):
         if row is None or not row["interval_seconds"]:
@@ -17,23 +31,27 @@ def measured_availability(rows, start: datetime, end: datetime) -> dict:
             until = min(until, instant(row["valid_until"]))
         cursor = max(at, start)
         while cursor < until:
-            midnight = datetime.combine(cursor.date() + timedelta(days=1), datetime.min.time(), timezone.utc)
-            segment_end = min(until, midnight)
+            block = blocks[(cursor - start) // block_duration]
+            segment_end = min(until, block["to"])
             seconds = (segment_end - cursor).total_seconds()
-            day = daily.setdefault(cursor.date().isoformat(), {"core": [0.0, 0.0], "full": [0.0, 0.0]})
+            record_status(block, row)
             for metric, column in (("core", "core_available"), ("full", "full_available")):
                 value = row[column]
                 if value is not None:
                     totals[metric][1] += seconds
-                    day[metric][1] += seconds
+                    block[metric][1] += seconds
                     if value:
                         totals[metric][0] += seconds
-                        day[metric][0] += seconds
+                        block[metric][0] += seconds
             cursor = segment_end
 
     previous = None
     for row in rows:
-        accumulate(previous, instant(row["checked_at"]))
+        at = instant(row["checked_at"])
+        if start <= at < end:
+            # A recorded outage still counts even without a measurable duration.
+            record_status(blocks[(at - start) // block_duration], row)
+        accumulate(previous, at)
         previous = row
     accumulate(previous, end)
     window = max(0, (end - start).total_seconds())
@@ -46,14 +64,13 @@ def measured_availability(rows, start: datetime, end: datetime) -> dict:
                 "unknown_seconds": round(max(0, duration - known), 3)}
 
     history = []
-    date = start.date()
-    while date <= end.date():
-        day_start = datetime.combine(date, datetime.min.time(), timezone.utc)
-        duration = max(0, (min(end, day_start + timedelta(days=1)) - max(start, day_start)).total_seconds())
-        if duration:
-            values = daily.get(date.isoformat(), {"core": [0, 0], "full": [0, 0]})
-            history.append({"day": date.isoformat(), "core": report(values["core"], duration),
-                            "full": report(values["full"], duration)})
-        date += timedelta(days=1)
+    for block in blocks:
+        duration = (block["to"] - block["from"]).total_seconds()
+        status = block["status"]
+        if duration - block["full"][1] > 0.000001 and severity[status] < severity["unknown"]:
+            status = "unknown"
+        history.append({"from": block["from"].isoformat(), "to": block["to"].isoformat(),
+                        "status": status, "core": report(block["core"], duration),
+                        "full": report(block["full"], duration)})
     return {"core": report(totals["core"], window), "full": report(totals["full"], window),
             "history": history, "from": start.isoformat(), "to": end.isoformat()}
