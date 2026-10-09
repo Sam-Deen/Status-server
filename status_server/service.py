@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import json
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -9,6 +10,7 @@ from .checks import CheckerRegistry, DockerChecker
 from .models import CheckResult, Monitor, Transition, utc_now
 from .repository import MonitorRepository
 from .validation import parse_monitor
+from health_contract import fresh_health, instant
 
 LOG = logging.getLogger(__name__)
 
@@ -22,6 +24,7 @@ class MonitorService:
         self.repository = repository
         self.registry = registry
         self.docker_checker = docker_checker
+        self.availability_cache = {}
 
     def create(self, data: object) -> int:
         config = parse_monitor(data, self.registry)
@@ -40,6 +43,7 @@ class MonitorService:
             raise MonitorNotFound
 
     def delete(self, monitor_id: int) -> bool:
+        self.availability_cache.pop(monitor_id, None)
         return self.repository.delete(monitor_id)
 
     def admin_monitors(self) -> list[dict]:
@@ -64,10 +68,18 @@ class MonitorService:
             failures = 0 if result.success else current.failures + 1
             status = "operational" if result.success else (
                 "down" if failures >= current.threshold else "degraded")
+        checked_at = utc_now()
+        if result.docker is not None:
+            core, full = result.core_available, result.full_available
+            if current.application_health and not result.docker.application_health and status != 'down':
+                core = full = None
+        else:
+            core = full = result.success if status != 'unknown' else None
         transition = Transition(status=status, failures=failures, success=status == "operational",
-                                checked_at=utc_now(), response_ms=result.response_ms,
+                                checked_at=checked_at, response_ms=result.response_ms,
                                 state_changed=status != current.status, next_check=time.time() + current.interval,
-                                docker=result.docker)
+                                docker=result.docker, core_available=core, full_available=full,
+                                observed_at=result.observed_at or checked_at, valid_until=result.valid_until)
         self.repository.save_check(current, transition)
 
     def check_due(self) -> int:
@@ -91,6 +103,8 @@ class MonitorService:
         today = datetime.now(timezone.utc).date()
         days = [(today - timedelta(days=29-offset)).isoformat() for offset in range(30)]
         output = []
+        observation_expiries = {}
+        now = datetime.now(timezone.utc)
         for monitor in self.repository.all(enabled_only=True):
             daily = self.repository.daily_counts(monitor.id, days[0])
             total = sum(value[1] for value in daily.values())
@@ -105,9 +119,41 @@ class MonitorService:
                 item.update({"container_name": monitor.target, "container_state": monitor.docker_state or "unknown",
                              "docker_health": monitor.docker_health or "unknown",
                              "last_state_change": monitor.docker_state_since})
+            cache = self.availability_cache.get(monitor.id)
+            if cache is None or time.monotonic() - cache[0] >= 30:
+                start = datetime.combine(today - timedelta(days=29), datetime.min.time(), timezone.utc)
+                availability = self.repository.availability(monitor.id, start, now)
+                self.availability_cache[monitor.id] = (time.monotonic(), availability)
+            else:
+                availability = cache[1]
+            item["measured_availability"] = availability
+            detail = json.loads(monitor.application_health) if monitor.application_health else None
+            if monitor.last_checked:
+                expiry = instant(monitor.last_checked) + timedelta(seconds=2 * monitor.interval)
+                if detail and monitor.application_health_valid:
+                    expiry = min(expiry, instant(detail['timestamp']) + timedelta(milliseconds=detail['validForMs']))
+                observation_expiries[monitor.id] = expiry
+            stale = not monitor.last_checked or (now - instant(monitor.last_checked)).total_seconds() > 2 * monitor.interval
+            if stale:
+                item["status"] = 'unknown'
+            if detail:
+                fresh = monitor.application_health_valid and not stale and fresh_health(detail, now, monitor.docker_state_since)
+                if monitor.application_health_valid and not fresh and not stale:
+                    item['status'] = 'down' if monitor.docker_health == 'unhealthy' else 'unknown'
+                item["application_health"] = detail if fresh else {
+                    "status": "unknown", "timestamp": detail['timestamp'], "coreAvailable": None,
+                    "components": {name: {**component, "status": "unknown", "reason": "Monitoring result stale"}
+                                   for name, component in detail['components'].items()}}
+            item["monitoring_stale"] = stale
             output.append(item)
         statuses = [item["status"] for item in output]
         overall = ("down" if "down" in statuses else "degraded" if "degraded" in statuses else
                    "operational" if statuses and all(status == "operational" for status in statuses) else "unknown")
-        return {"overall": overall, "monitors": output, "incidents": self.repository.incidents(20, public=True),
+        incidents = self.repository.incidents(20, public=True)
+        for incident in incidents:
+            expiry = observation_expiries.get(incident['monitor_id'])
+            if not incident['ended_at'] and expiry and expiry < now:
+                incident['ended_at'] = expiry.isoformat()
+                incident['ended_reason'] = 'monitoring gap'
+        return {"overall": overall, "monitors": output, "incidents": incidents,
                 "updated_at": utc_now()}

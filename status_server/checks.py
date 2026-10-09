@@ -11,6 +11,8 @@ import urllib.error
 import urllib.request
 from collections import defaultdict
 from urllib.parse import urlsplit
+from datetime import datetime, timedelta, timezone
+from health_contract import sanitize_health, fresh_health, instant
 
 from .models import CheckResult, DockerContainer, Monitor
 
@@ -116,8 +118,8 @@ class DockerProxyClient:
         try:
             request = urllib.request.Request(self.url, headers={"Accept": "application/json"})
             with self.opener.open(request, timeout=5) as response:
-                raw = response.read(1_000_001)
-            if len(raw) > 1_000_000:
+                raw = response.read(3_000_001)
+            if len(raw) > 3_000_000:
                 raise ValueError
             items = json.loads(raw)["containers"]
             if not isinstance(items, list) or len(items) > 512:
@@ -130,7 +132,8 @@ class DockerProxyClient:
                         or state not in self.VALID_STATES or health not in self.VALID_HEALTH
                         or (since is not None and (not isinstance(since, str) or len(since) > 64))):
                     raise ValueError
-                result.append(DockerContainer(name, state, health, since))
+                detail = sanitize_health(item.get("application_health"))
+                result.append(DockerContainer(name, state, health, since, detail))
             return result
         except (OSError, TimeoutError, ValueError, KeyError, TypeError, AttributeError, UnicodeError,
                 urllib.error.URLError, json.JSONDecodeError, http.client.HTTPException) as exc:
@@ -155,14 +158,27 @@ class DockerChecker(Checker):
 
     @staticmethod
     def state_result(container: DockerContainer) -> CheckResult:
+        detail = container.application_health
+        if container.state == "running" and detail and fresh_health(detail, started_at=container.state_since):
+            status = detail["status"]
+            expiry = instant(detail["timestamp"]) + timedelta(milliseconds=detail["validForMs"])
+            return CheckResult(status == "operational" if status != "unknown" else None,
+                               response_ms=detail["components"].get("application", {}).get("latencyMs"),
+                               status=status, docker=container, core_available=detail["coreAvailable"],
+                               full_available=None if status == "unknown" else status == "operational",
+                               observed_at=detail["timestamp"], valid_until=expiry.isoformat())
         if container.state == "running":
             status = {"healthy": "operational", "none": "operational", "starting": "degraded",
                       "unhealthy": "down"}.get(container.health, "unknown")
         else:
             status = {"restarting": "degraded", "paused": "down", "created": "down",
                       "removing": "down", "exited": "down", "dead": "down"}.get(container.state, "unknown")
-        return CheckResult(status == "operational" if status != "unknown" else None,
-                           status=status, docker=container)
+        known = status != "unknown"
+        return CheckResult(status == "operational" if known else None, status=status, docker=container,
+                           core_available=None if detail and container.state == "running" and status != 'down' else
+                           ((status == "operational") if known else None),
+                           full_available=None if detail and container.state == "running" else
+                           (status == "operational" if known else None))
 
     def check_many(self, monitors: list[Monitor]) -> dict[int, CheckResult]:
         try:

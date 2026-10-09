@@ -5,6 +5,7 @@ WORKDIR /app
 RUN groupadd --system --gid 10001 status && useradd --system --uid 10001 --gid status --home /app status \
     && mkdir /data && chown status:status /data
 COPY --chown=status:status app.py /app/app.py
+COPY --chown=status:status health_contract.py /app/health_contract.py
 COPY --chown=status:status status_server /app/status_server
 COPY --chown=status:status static /app/static
 USER status

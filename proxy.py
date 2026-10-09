@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Mapping
+from health_contract import sanitize_health
 
 SOCKET_PATH = "/var/run/docker.sock"
 MAX_CONTAINERS = 512
@@ -87,8 +88,19 @@ def sanitized_container(inspect: dict) -> dict:
     raw_health = str(health_obj.get("Status") or "unknown") if isinstance(health_obj, dict) else "none"
     health = raw_health if raw_health in {"healthy", "unhealthy", "starting", "none"} else "unknown"
     since_field = "StartedAt" if status == "running" else "FinishedAt" if status in {"exited", "dead"} else None
-    return {"name": name, "state": status, "health": health,
+    item = {"name": name, "state": status, "health": health,
             "state_since": timestamp(state.get(since_field)) if since_field else None}
+    logs = health_obj.get("Log", []) if isinstance(health_obj, dict) else []
+    if isinstance(logs, list) and logs and isinstance(logs[-1], dict):
+        output = logs[-1].get("Output")
+        if isinstance(output, str) and len(output.encode('utf-8')) <= 4096:
+            try:
+                detail = sanitize_health(json.loads(output))
+            except (ValueError, TypeError):
+                detail = None
+            if detail:
+                item["application_health"] = detail
+    return item
 
 
 class ProxyService:

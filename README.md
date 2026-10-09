@@ -1,6 +1,6 @@
 # Status Server
 
-Status Server is a self hosted status page for HTTP, HTTPS, TCP, and Docker containers. It runs scheduled checks, tracks incidents and 30 day uptime, and provides a public dashboard plus a single administrator interface.
+Status Server is a self hosted status page for HTTP, HTTPS, TCP, and Docker containers. It runs scheduled checks, tracks incidents and 30 day measured availability, and provides a public dashboard plus a single administrator interface.
 
 ## Features and monitor types
 
@@ -9,7 +9,7 @@ Status Server is a self hosted status page for HTTP, HTTPS, TCP, and Docker cont
 - HTTP and HTTPS checks: GET request; 2xx and 3xx are healthy, redirects are not followed.
 - TCP checks: verifies that a connection opens to `host:port`.
 - Docker Container checks: reads running or stopped state and Docker HEALTHCHECK status without requiring ports, heartbeats, or application changes.
-- SQLite persistence with 35 day raw check retention. Unknown Docker checks are excluded from uptime calculations.
+- SQLite persistence with 35 day raw check retention. Core/full availability and monitoring coverage are calculated from bounded observations. Unknown time is excluded and shown as missing coverage.
 
 ## Screenshots
 
@@ -100,7 +100,7 @@ The volume prefix depends on the Compose project name; check `docker volume ls` 
 
 ## Docker monitoring security
 
-Only the proxy container mounts `/var/run/docker.sock`. Its HTTP server accepts `GET /containers` and `GET /healthz`; it sends only container list and inspect GET requests to Docker. It strips the raw inspect response down to name, state, health, and state time before returning it to Status Server. It rejects Docker write methods and all other routes. Its port is not published and it lives on the private `docker_api` network. The proxy excludes itself unless `INCLUDE_PROXY_CONTAINER=true` is set. If it fails, Docker monitors become Unknown while the status page remains available.
+Only the proxy container mounts `/var/run/docker.sock`. Its HTTP server accepts `GET /containers` and `GET /healthz`; it sends only container list and inspect GET requests to Docker. It strips the raw inspect response down to name, state, health, and state time before returning it to Status Server. It additionally accepts validated, bounded application-health/v1 snapshots from the latest Docker healthcheck output; arbitrary output is never forwarded. It rejects Docker write methods and all other routes. Its port is not published and it lives on the private `docker_api` network. The proxy excludes itself unless `INCLUDE_PROXY_CONTAINER=true` is set. If it fails, Docker monitors become Unknown while the status page remains available.
 
 The socket gives the proxy process powerful Docker daemon access if the proxy itself is compromised; a `:ro` socket mount does not remove that risk. [Docker's socket security guide](https://docs.docker.com/engine/security/protect-access/) explains the underlying access model. Keep the proxy image updated and do not attach untrusted containers to `docker_api`. The public API never returns container IDs, environment variables, images, labels, mounts, or raw Docker inspect data. Monitor names and descriptions are public, so avoid putting secrets in them.
 
@@ -136,3 +136,10 @@ The example password is for local development only. Use Compose to test Docker m
 - If Docker discovery is unavailable, check `docker compose logs docker_proxy` and that the proxy is healthy. Docker monitors become Unknown until it recovers.
 - If a monitor is Down, check its target from Admin. HTTP redirects are not followed, and a container without HEALTHCHECK only reports its running state.
 - If Docker reports a name conflict, check for an older Status Server deployment using the fixed container names before starting another copy.
+
+## Detailed application health
+
+See [HEALTH.md](HEALTH.md) for the reusable Docker health-output contract, component
+reporting, time-weighted core/full availability, gap handling, migration, and
+deployment. The existing persistence, Docker proxy routes, and independent
+Status Server healthcheck are retained. No new container networking is required.

@@ -7,7 +7,7 @@ from typing import Mapping
 
 
 def utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
 
 
 @dataclass(frozen=True)
@@ -47,10 +47,12 @@ class Monitor:
     docker_state: str | None
     docker_health: str | None
     docker_state_since: str | None
+    application_health: str | None = None
+    application_health_valid: bool = False
 
     @classmethod
     def from_record(cls, record: Mapping) -> Monitor:
-        return cls(**{key: bool(record[key]) if key == "enabled" else record[key]
+        return cls(**{key: bool(record[key]) if key in {"enabled", "application_health_valid"} else record[key]
                       for key in cls.__dataclass_fields__})
 
     def admin_dict(self) -> dict:
@@ -64,6 +66,7 @@ class DockerContainer:
     state: str
     health: str
     state_since: str | None
+    application_health: dict | None = None
 
     def as_dict(self) -> dict:
         return vars(self).copy()
@@ -75,6 +78,10 @@ class CheckResult:
     response_ms: int | None = None
     status: str | None = None
     docker: DockerContainer | None = None
+    core_available: bool | None = None
+    full_available: bool | None = None
+    observed_at: str | None = None
+    valid_until: str | None = None
 
 
 @dataclass(frozen=True)
@@ -87,3 +94,7 @@ class Transition:
     state_changed: bool
     next_check: float
     docker: DockerContainer | None
+    core_available: bool | None = None
+    full_available: bool | None = None
+    observed_at: str | None = None
+    valid_until: str | None = None

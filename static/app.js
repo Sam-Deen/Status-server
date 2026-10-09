@@ -40,6 +40,32 @@ function dockerDetail(m) {
   const healthText = health === 'none' ? 'No health check' : `Health: ${health}`;
   return `${state[0].toUpperCase() + state.slice(1)} · ${healthText}`;
 }
+function percentage(value) { return value == null ? '—' : value.toFixed(2) + '%'; }
+function healthDetails(detail) {
+  const panel = el('details', 'component-health');
+  panel.append(el('summary', '', 'Components · measured ' + ago(detail.timestamp)));
+  for (const [name, component] of Object.entries(detail.components || {})) {
+    const row = el('div', 'service-description');
+    row.append(el('strong', '', name + ': '), statusNode(component.status));
+    if (component.latencyMs != null) row.append(el('span', '', ' · ' + component.latencyMs + ' ms'));
+    if (component.reason) row.append(el('span', '', ' · ' + component.reason));
+    if (component.reconnectAttempts != null) row.append(el('span', '', ' · Reconnects: ' + component.reconnectAttempts));
+    row.append(el('div', '', 'Last success: ' + stamp(component.lastSuccess) +
+      ' · Failures: ' + (component.consecutiveFailures || 0)));
+    panel.append(row);
+  }
+  return panel;
+}
+function availabilityCell(m) {
+  const box = el('td', 'numeric');
+  const a = m.measured_availability;
+  if (!a) return box;
+  box.append(el('div', '', 'Core: ' + percentage(a.core.availability)),
+    el('div', '', 'Full: ' + percentage(a.full.availability)),
+    el('div', 'service-description', 'Coverage core/full: ' + percentage(a.core.coverage) + ' / ' + percentage(a.full.coverage)));
+  box.title = 'Time measured within the last 30 calendar days. Unknown time is excluded and shown as missing coverage. This is not a contractual SLA.';
+  return box;
+}
 function empty(node, message) { clear(node); node.append(el('div', 'empty-state', message)); }
 async function api(path, options = {}) {
   const headers = {...options.headers};
@@ -72,10 +98,12 @@ async function refreshPublic() {
         name.append(el('div','service-description',`Container: ${m.container_name} · ${dockerDetail(m)}`));
         if (m.last_state_change) name.append(el('div','service-description',`State changed ${stamp(m.last_state_change)}`));
       }
+      if (m.application_health) name.append(healthDetails(m.application_health));
+      if (m.monitoring_stale) name.append(el('div', 'service-description', 'Monitoring data stale'));
       const state = el('td'); state.append(statusNode(m.status));
       if ((m.status === 'down' || m.status === 'degraded') && m.state_since)
         state.append(el('div','state-duration',`for ${duration(m.state_since)}`));
-      tr.append(name, state, el('td','numeric',m.uptime === null ? '—' : `${m.uptime.toFixed(2)}%`),
+      tr.append(name, state, availabilityCell(m),
         el('td','numeric',m.response_ms === null ? '—' : `${m.response_ms} ms`),
         el('td','muted',ago(m.last_checked)));
       body.append(tr);
@@ -85,13 +113,14 @@ async function refreshPublic() {
     if (!count) empty(histories, 'History appears after the first checks.');
     for (const m of data.monitors) {
       const row = el('div','history-row'); const bars = el('div','bars');
-      for (const day of m.history) {
+      for (const day of (m.measured_availability?.history || [])) {
+        day.uptime = day.full.availability;
         const kind = day.uptime === null ? 'empty' : day.uptime >= 99 ? 'good' : day.uptime >= 50 ? 'warn' : 'bad';
         const bar = el('i',`bar ${kind}`);
-        bar.title = `${day.day}: ${day.uptime === null ? 'No data' : `${day.uptime}% uptime`}`;
+        bar.title = day.day + ': full ' + percentage(day.uptime) + ' · coverage ' + percentage(day.full.coverage);
         bars.append(bar);
       }
-      row.append(el('div','history-name',m.name), bars, el('div','history-uptime',m.uptime === null ? '—' : `${m.uptime.toFixed(2)}%`));
+      row.append(el('div','history-name',m.name), bars, el('div','history-uptime',percentage(m.measured_availability?.full.availability)));
       histories.append(row);
     }
     renderIncidents($('incidents-list'), data.incidents);
@@ -103,6 +132,7 @@ function renderIncidents(node, incidents) {
   for (const i of incidents) {
     const row = el('div','incident-row');
     const service = el('div'); service.append(el('span',`status-text ${i.severity}`,`${i.monitor_name} ${i.severity === 'down' ? 'unavailable' : 'degraded'}`));
+    if (i.ended_reason) service.append(el('div', 'service-description', 'Observation ended: ' + i.ended_reason));
     row.append(el('div','time',stamp(i.started_at)), service,
       el('div','duration',i.ended_at ? duration(i.started_at,i.ended_at) : `Ongoing · ${duration(i.started_at)}`));
     node.append(row);
@@ -226,6 +256,7 @@ async function showHistory(m) {
     for (const c of data.checks) {
       const row=el('div','detail-row');row.append(el('span','muted',stamp(c.checked_at)),
         el('span',`status-text ${c.status}`,label[c.status]),el('span','numeric',c.response_ms===null?'—':`${c.response_ms} ms`));node.append(row);
+      if (c.application_health) node.append(healthDetails(c.application_health));
     }
   } catch(err){node.textContent=err.message;}
   node.scrollIntoView({behavior:'smooth',block:'nearest'});
