@@ -1,5 +1,8 @@
 # Detailed health and measured availability
 
+For the request/response format and publisher setup, use
+[HEALTHCHECK_SPEC.md](HEALTHCHECK_SPEC.md).
+
 The existing Docker proxy still uses only list/inspect GET requests. It now
 accepts a bounded `application-health/v1` JSON snapshot from the **latest**
 Docker healthcheck output and forwards only validated contract fields. Arbitrary

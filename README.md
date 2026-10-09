@@ -139,6 +139,10 @@ The example password is for local development only. Use Compose to test Docker m
 
 ## Detailed application health
 
+See [HEALTHCHECK_SPEC.md](HEALTHCHECK_SPEC.md) for the application integration
+spec: the health request, required JSON response, Docker HEALTHCHECK setup, and
+steps to verify an Operational status.
+
 See [HEALTH.md](HEALTH.md) for the reusable Docker health-output contract, component
 reporting, time-weighted core/full availability, gap handling, migration, and
 deployment. The existing persistence, Docker proxy routes, and independent
