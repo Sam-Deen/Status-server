@@ -103,7 +103,10 @@ async function refreshPublic() {
     const message = {operational:'All systems operational', degraded:'Some services degraded', down:'Service disruption detected', unknown:'Status unavailable'}[data.overall];
     copy.append(el('strong', '', message), el('small', '', count ? `${count} service${count === 1 ? '' : 's'} monitored` : 'No monitors configured yet'));
     overall.append(el('i', `status-dot ${data.overall}`), copy);
-    const body = $('services-body'); clear(body);
+    const body = $('services-body');
+    const expandedComponents = new Set(Array.from(body.querySelectorAll('details[data-monitor-id]'))
+      .filter(panel => panel.open).map(panel => panel.dataset.monitorId));
+    clear(body);
     for (const m of data.monitors) {
       const tr = el('tr');
       const name = el('td'); name.append(el('div','service-name',m.name));
@@ -112,7 +115,12 @@ async function refreshPublic() {
         name.append(el('div','service-description',`Container: ${m.container_name} · ${dockerDetail(m)}`));
         if (m.last_state_change) name.append(el('div','service-description',`State changed ${stamp(m.last_state_change)}`));
       }
-      if (m.application_health) name.append(healthDetails(m.application_health));
+      if (m.application_health) {
+        const panel = healthDetails(m.application_health);
+        panel.dataset.monitorId = String(m.id);
+        panel.open = expandedComponents.has(panel.dataset.monitorId);
+        name.append(panel);
+      }
       if (m.monitoring_stale) name.append(el('div', 'service-description', 'Monitoring data stale'));
       const state = el('td'); state.append(statusNode(m.status));
       if ((m.status === 'down' || m.status === 'degraded') && m.state_since)
