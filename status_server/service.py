@@ -74,6 +74,11 @@ class MonitorService:
             if result.success and result.response_ms is not None and result.response_ms > self.slow_ms:
                 status = 'degraded'
         checked_at = utc_now()
+        reason = result.reason
+        if result.status is None and status == 'degraded' and result.success:
+            reason = 'Response latency elevated'
+        elif result.status is None and not result.success and not reason:
+            reason = 'Operation failed'
         if result.docker is not None:
             core, full = result.core_available, result.full_available
             if current.application_health and not result.docker.application_health and result.docker.state == 'running':
@@ -88,7 +93,7 @@ class MonitorService:
                                 docker=result.docker, core_available=core, full_available=full,
                                 observed_at=result.observed_at or checked_at, valid_until=result.valid_until,
                                 attempted_at=result.attempted_at or attempted_at or checked_at, failed=result.success is not True,
-                                stale_after_seconds=current.interval * self.freshness_factor)
+                                stale_after_seconds=current.interval * self.freshness_factor, reason=reason)
         self.repository.save_check(current, transition)
 
     def check_due(self) -> int:

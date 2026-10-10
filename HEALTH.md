@@ -74,6 +74,20 @@ Unknown closes an observed incident at its coverage boundary with the reason
 also have explicit ending reasons. Fresh successful observations establish
 recovery. Restarting Monkee or Status Server does not delete this history.
 
+Recent incidents include a persisted `details` summary of their impaired checks:
+affected components, critical/non-critical/passive roles, safe reasons, component
+and application latency ranges, and explicitly reported core availability.
+Recovery checks are excluded from these ranges. Container-only and endpoint-only
+checks identify their scope without claiming that internal components were tested.
+HTTP/TCP checks now retain safe failure reasons (HTTP status, timeout, or connection
+failure); slow successful checks retain `Response latency elevated`.
+
+Older incidents are reconstructed from retained checks within their own observation
+window, then cached. Expired snapshots and snapshots retained after a container
+stopped are excluded from component evidence. Missing historical data is shown as
+not recorded; a monitor's current snapshot is never used to explain an old incident.
+The summary survives raw check cleanup while the incident itself remains retained.
+
 Raw checks and completed incidents retain the existing 35-day cleanup policy.
 The existing `uptime`/`history` API fields remain check-count statistics for API
 compatibility; the dashboard now uses the explicitly time-weighted metrics below.

@@ -147,7 +147,9 @@ class StatusTests(unittest.TestCase):
             good_id = self.service.create(self.config(target=f"http://127.0.0.1:{port}/ok"))
             bad_id = self.service.create(self.config(name="Other", target=f"http://127.0.0.1:{port}/bad"))
             self.assertTrue(HttpChecker().check(self.repository.get(good_id)).success)
-            self.assertFalse(HttpChecker().check(self.repository.get(bad_id)).success)
+            failure = HttpChecker().check(self.repository.get(bad_id))
+            self.assertFalse(failure.success)
+            self.assertEqual(failure.reason, 'HTTP 503')
         finally:
             server.shutdown()
             server.server_close()
@@ -160,7 +162,9 @@ class StatusTests(unittest.TestCase):
             result = TcpChecker().check(self.repository.get(tcp_id))
             self.assertTrue(result.success)
             self.assertIsInstance(result.response_ms, int)
-        self.assertFalse(TcpChecker().check(self.repository.get(tcp_id)).success)
+        failure = TcpChecker().check(self.repository.get(tcp_id))
+        self.assertFalse(failure.success)
+        self.assertEqual(failure.reason, 'Connection failed')
 
     def test_authentication_and_csrf(self):
         settings = replace(Settings.from_env({"ADMIN_PASSWORD": "unit-test-only-password-123456"}), db_path=self.path)

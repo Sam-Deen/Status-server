@@ -68,6 +68,8 @@ Use **Add monitor** in Admin. HTTP/HTTPS targets are full URLs. TCP targets are 
 
 For **Docker Container**, choose a discovered running or stopped container from the dropdown. Use **Refresh containers** after adding a container. The container name is stored as the monitor target, so recreation under the same name continues monitoring. A reused name could refer to a different workload; review its monitor when reusing names. The admin interface states when a running container has no HEALTHCHECK: only its running state is monitored.
 
+Recent incidents show recorded component failures, criticality, reasons, and latency ranges when detailed application health is available. They distinguish core functionality from optional dependencies and identify when only an endpoint or container was checked. Older incidents use their retained check history; missing evidence is shown as not recorded. A successful HTTP/TCP check taking longer than `HEALTH_RESPONSE_SLOW_MS` (2000 ms by default) is also Degraded.
+
 | Docker state | Status |
 | --- | --- |
 | Running + healthy, or running without HEALTHCHECK | Operational |
@@ -128,6 +130,8 @@ python3 -m unittest discover -s tests -v
 ```
 
 The example password is for local development only. Use Compose to test Docker monitoring because local Python cannot resolve the private `docker_proxy` hostname. The tests use temporary SQLite databases, local sockets, and fake Docker responses; they do not need real homelab containers. The frontend is plain files in `static/`.
+
+With Node installed, run the incident rendering checks with `node --test tests/test_incidents_ui.js`.
 
 ## Troubleshooting
 

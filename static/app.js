@@ -52,6 +52,8 @@ function healthDetails(detail) {
   for (const [name, component] of Object.entries(detail.components || {})) {
     const row = el('div', 'service-description');
     row.append(el('strong', '', name + ': '), statusNode(component.status));
+    row.append(el('span', '', component.measurementType === 'passive' ? ' · Passive observation' :
+      component.critical ? ' · Critical component' : ' · Non-critical component'));
     if (component.latencyMs != null) row.append(el('span', '', ' · ' + component.latencyMs + ' ms'));
     if (component.reason) row.append(el('span', '', ' · ' + component.reason));
     if (component.reconnectAttempts != null) row.append(el('span', '', ' · Reconnects: ' + component.reconnectAttempts));
@@ -146,11 +148,53 @@ function renderIncidents(node, incidents) {
   for (const i of incidents) {
     const row = el('div','incident-row');
     const service = el('div'); service.append(el('span',`status-text ${i.severity}`,`${i.monitor_name} ${i.severity === 'down' ? 'unavailable' : 'degraded'}`));
+    service.append(incidentDetails(i.details));
     if (i.ended_reason) service.append(el('div', 'service-description', 'Observation ended: ' + i.ended_reason));
     row.append(el('div','time',stamp(i.started_at)), service,
       el('div','duration',i.ended_at ? duration(i.started_at,i.ended_at) : `Ongoing · ${duration(i.started_at)}`));
     node.append(row);
   }
+}
+function latencyRange(value) {
+  if (!value) return 'not recorded';
+  return value.min === value.max ? `${value.min} ms` : `${value.min}–${value.max} ms`;
+}
+function incidentDetails(detail) {
+  const box = el('div', 'incident-evidence');
+  const line = value => box.append(el('div', 'service-description', value));
+  if (!detail?.check_count) {
+    line('Cause, component impact, and latency were not recorded.');
+    return box;
+  }
+  const sources = detail.sources || [];
+  const core = detail.core_states || [];
+  if (sources.includes('application')) {
+    if (core.includes('unavailable')) line('Core functionality was unavailable in at least one recorded application report.');
+    else if (core.length === 1 && core[0] === 'available') line('Core functionality remained available in the recorded application reports.');
+    if (core.includes('unknown')) line('Some application reports could not establish core availability.');
+  }
+  if (sources.includes('http') || sources.includes('tcp'))
+    line('Endpoint check affected. Internal component health was not measured.');
+  if (sources.includes('docker')) {
+    line('Container check affected: ' + (detail.container_states || []).join(', ') +
+      ((detail.container_health || []).length ? ' · Health: ' + detail.container_health.join(', ') : '') +
+      '. Internal component health was not measured.');
+  }
+  if (sources.includes('unknown')) line('Internal component health was not recorded for some checks.');
+  for (const [name, component] of Object.entries(detail.components || {})) {
+    const roles = component.roles.map(role => ({critical:'critical', noncritical:'non-critical',
+      passive:'passive observation; does not determine availability'}[role] || role)).join(', ');
+    line(name + ' · ' + component.statuses.map(status => label[status] || status).join(', ') +
+      ' · ' + roles + (component.reasons.length ? ' · ' + component.reasons.join(', ') : '') +
+      ' · Latency while affected: ' + latencyRange(component.latency_ms));
+  }
+  if (sources.includes('application') && !Object.keys(detail.components || {}).length)
+    line('The application report did not identify an affected component.');
+  if (detail.reasons?.length) line('Check reason: ' + detail.reasons.join(', '));
+  line((sources.length === 1 && sources[0] === 'application' ? 'Application latency' : 'Check response time') +
+    ' during incident: ' + latencyRange(detail.response_ms));
+  line('Evidence: ' + detail.check_count + ' recorded incident check' + (detail.check_count === 1 ? '' : 's'));
+  return box;
 }
 function route() {
   const admin = location.pathname === '/admin';
@@ -270,6 +314,7 @@ async function showHistory(m) {
     for (const c of data.checks) {
       const row=el('div','detail-row');row.append(el('span','muted',stamp(c.checked_at)),
         el('span',`status-text ${c.status}`,label[c.status]),el('span','numeric',c.response_ms===null?'—':`${c.response_ms} ms`));node.append(row);
+      if (c.reason) node.append(el('div', 'service-description', c.reason));
       if (c.application_health) node.append(healthDetails(c.application_health));
     }
   } catch(err){node.textContent=err.message;}

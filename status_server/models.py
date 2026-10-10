@@ -86,6 +86,7 @@ class CheckResult:
     observed_at: str | None = None
     valid_until: str | None = None
     attempted_at: str | None = None
+    reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -105,3 +106,4 @@ class Transition:
     attempted_at: str | None = None
     failed: bool = False
     stale_after_seconds: float | None = None
+    reason: str | None = None

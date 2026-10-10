@@ -80,9 +80,12 @@ class HttpChecker(Checker):
                 response.read(1024)
             finally:
                 connection.close()
-            return CheckResult(healthy, round((time.monotonic() - started) * 1000), attempted_at=attempt)
-        except (OSError, TimeoutError, ValueError, UnicodeError, http.client.HTTPException):
-            return CheckResult(False, attempted_at=attempt)
+            return CheckResult(healthy, round((time.monotonic() - started) * 1000), attempted_at=attempt,
+                               reason=None if healthy else f"HTTP {response.status}")
+        except TimeoutError:
+            return CheckResult(False, attempted_at=attempt, reason="Request timed out")
+        except (OSError, ValueError, UnicodeError, http.client.HTTPException):
+            return CheckResult(False, attempted_at=attempt, reason="Connection failed")
 
 
 class TcpChecker(Checker):
@@ -109,8 +112,10 @@ class TcpChecker(Checker):
             with socket.create_connection((host.strip("[]"), int(port)), timeout=monitor.timeout):
                 pass
             return CheckResult(True, round((time.monotonic() - started) * 1000), attempted_at=attempt)
-        except (OSError, TimeoutError, ValueError):
-            return CheckResult(False, attempted_at=attempt)
+        except TimeoutError:
+            return CheckResult(False, attempted_at=attempt, reason="Request timed out")
+        except (OSError, ValueError):
+            return CheckResult(False, attempted_at=attempt, reason="Connection failed")
 
 
 class DockerProxyClient:
