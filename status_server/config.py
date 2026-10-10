@@ -23,6 +23,8 @@ class Settings:
     session_seconds: int = 12 * 3600
     retention_days: int = 35
     max_body_bytes: int = 8192
+    monitor_freshness_factor: float = 2
+    response_slow_ms: int = 2000
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> Settings:
@@ -57,4 +59,12 @@ class Settings:
             valid_proxy = False
         if not valid_proxy:
             raise ConfigurationError("DOCKER_PROXY_URL must be an HTTP /containers URL without credentials")
-        return cls(db_path, host, port, username, password, cookie_value == "true", proxy_url)
+        try:
+            freshness = float(values.get('HEALTH_MONITOR_FRESHNESS_FACTOR', '2'))
+            slow_ms = int(values.get('HEALTH_RESPONSE_SLOW_MS', '2000'))
+            if not 2 <= freshness <= 10 or not 1 <= slow_ms <= 86400000:
+                raise ValueError
+        except (ValueError, TypeError):
+            raise ConfigurationError('Use HEALTH_MONITOR_FRESHNESS_FACTOR 2–10 and HEALTH_RESPONSE_SLOW_MS 1–86400000') from None
+        return cls(db_path, host, port, username, password, cookie_value == "true", proxy_url,
+                   monitor_freshness_factor=freshness, response_slow_ms=slow_ms)

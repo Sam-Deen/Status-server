@@ -73,7 +73,9 @@ Each component can also include:
 | `critical` | Boolean; defaults to `false`. Mark components required for core functionality as `true`. |
 | `latencyMs` | Finite number from `0` to `86400000`, or `null`. The `application` component's latency supplies the dashboard's Response column. |
 | `reason` | One of the allowed reasons below, an HTTP error such as `"HTTP 503"` matching `HTTP [45][0-9]{2}`, or `null`. Other strings are replaced with `null`. |
-| `lastAttempt`, `lastSuccess` | Timezone-qualified measurement timestamps, or `null`. |
+| `lastAttempt`, `lastSuccess`, `lastFailure`, `lastMeasurement`, `lastStatusChange` | Timezone-qualified timestamps, or `null`. Attempt is probe start; measurement is completion; success/failure retain their most recent respective result; status change is the most recent transition. |
+| `measurementType` | Optional `"active"` or `"passive"`. Passive observations cannot be critical and do not determine availability. Omission preserves legacy active semantics. |
+| `intervalMs`, `staleAfterMs` | Optional finite numbers from 1000 to 604800000. Freshness includes the interval, timeout, scheduling, and Docker/proxy delivery margin. `lastMeasurement` is required to establish freshness when `staleAfterMs` is supplied. |
 | `consecutiveFailures`, `consecutiveRecoveries`, `reconnectAttempts` | Integers from `0` to `1000000`. Failure and recovery counters default to `0`; reconnect attempts are optional. |
 
 Unknown fields are removed before forwarding. Do not include credentials, URLs,
@@ -105,7 +107,8 @@ Health endpoint unavailable
 ## 3. Keep the reported status consistent
 
 To report **Operational**, set `status` to `"operational"`, `coreAvailable` to
-`true`, and every component's status to `"operational"`.
+`true`, and every actively measured component's status to `"operational"`.
+Passive observations may be Unknown or failed without determining availability.
 
 To report **Degraded** while core functionality still works, use
 `status: "degraded"` and `coreAvailable: true`. No critical component may be

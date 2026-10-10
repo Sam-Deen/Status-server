@@ -26,7 +26,8 @@ def measured_availability(rows, start: datetime, end: datetime) -> dict:
             # Legacy check counts cannot establish how long a measurement was valid.
             return
         at = instant(row["checked_at"])
-        until = min(next_at, at + timedelta(seconds=2 * row["interval_seconds"]), end)
+        freshness = row['stale_after_seconds'] if 'stale_after_seconds' in row.keys() and row['stale_after_seconds'] else 2 * row['interval_seconds']
+        until = min(next_at, at + timedelta(seconds=freshness), end)
         if row["valid_until"]:
             until = min(until, instant(row["valid_until"]))
         cursor = max(at, start)

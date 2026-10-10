@@ -10,11 +10,12 @@ import time
 import urllib.error
 import urllib.request
 from collections import defaultdict
+from dataclasses import replace
 from urllib.parse import urlsplit
 from datetime import datetime, timedelta, timezone
-from health_contract import sanitize_health, fresh_health, instant
+from health_contract import sanitize_health, fresh_health, instant, current_health
 
-from .models import CheckResult, DockerContainer, Monitor
+from .models import CheckResult, DockerContainer, Monitor, utc_now
 
 
 class InvalidTarget(ValueError):
@@ -38,7 +39,13 @@ class Checker:
         raise NotImplementedError
 
     def check_many(self, monitors: list[Monitor]) -> dict[int, CheckResult]:
-        return {monitor.id: self.check(monitor) for monitor in monitors}
+        results = {}
+        for monitor in monitors:
+            try:
+                results[monitor.id] = self.check(monitor)
+            except Exception:
+                results[monitor.id] = CheckResult(None, status='unknown')
+        return results
 
 
 class HttpChecker(Checker):
@@ -60,6 +67,7 @@ class HttpChecker(Checker):
 
     def check(self, monitor: Monitor) -> CheckResult:
         started = time.monotonic()
+        attempt = utc_now()
         try:
             parts = urlsplit(monitor.target)
             connection_type = http.client.HTTPSConnection if monitor.type == "https" else http.client.HTTPConnection
@@ -72,9 +80,9 @@ class HttpChecker(Checker):
                 response.read(1024)
             finally:
                 connection.close()
-            return CheckResult(healthy, round((time.monotonic() - started) * 1000))
+            return CheckResult(healthy, round((time.monotonic() - started) * 1000), attempted_at=attempt)
         except (OSError, TimeoutError, ValueError, UnicodeError, http.client.HTTPException):
-            return CheckResult(False)
+            return CheckResult(False, attempted_at=attempt)
 
 
 class TcpChecker(Checker):
@@ -95,13 +103,14 @@ class TcpChecker(Checker):
 
     def check(self, monitor: Monitor) -> CheckResult:
         started = time.monotonic()
+        attempt = utc_now()
         host, port = monitor.target.rsplit(":", 1)
         try:
             with socket.create_connection((host.strip("[]"), int(port)), timeout=monitor.timeout):
                 pass
-            return CheckResult(True, round((time.monotonic() - started) * 1000))
+            return CheckResult(True, round((time.monotonic() - started) * 1000), attempted_at=attempt)
         except (OSError, TimeoutError, ValueError):
-            return CheckResult(False)
+            return CheckResult(False, attempted_at=attempt)
 
 
 class DockerProxyClient:
@@ -160,13 +169,20 @@ class DockerChecker(Checker):
     def state_result(container: DockerContainer) -> CheckResult:
         detail = container.application_health
         if container.state == "running" and detail and fresh_health(detail, started_at=container.state_since):
+            detail = current_health(detail)
+            container = replace(container, application_health=detail)
             status = detail["status"]
             expiry = instant(detail["timestamp"]) + timedelta(milliseconds=detail["validForMs"])
+            for component in detail['components'].values():
+                if component.get('measurementType') != 'passive' and component.get('status') != 'unknown' and component.get('lastMeasurement') and 'staleAfterMs' in component:
+                    expiry = min(expiry, instant(component['lastMeasurement']) + timedelta(milliseconds=component['staleAfterMs']))
             return CheckResult(status == "operational" if status != "unknown" else None,
                                response_ms=detail["components"].get("application", {}).get("latencyMs"),
                                status=status, docker=container, core_available=detail["coreAvailable"],
                                full_available=None if status == "unknown" else status == "operational",
                                observed_at=detail["timestamp"], valid_until=expiry.isoformat())
+        if container.state == 'running' and detail:
+            return CheckResult(None, status='unknown', docker=container)
         if container.state == "running":
             status = {"healthy": "operational", "none": "operational", "starting": "degraded",
                       "unhealthy": "down"}.get(container.health, "unknown")

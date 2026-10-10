@@ -215,10 +215,10 @@ class IntegrationTests(unittest.TestCase):
         reopened = MonitorRepository(Database(self.database.path))
         self.assertEqual(reopened.history(self.ident), history)
 
-    def test_stale_detail_falls_back_to_docker_without_claiming_full_application_health(self):
+    def test_expired_application_measurement_is_unknown_even_if_docker_is_healthy(self):
         detail = sanitize_health(snapshot(timestamp='2026-01-01T00:00:00Z'))
         result = self.checker.state_result(DockerContainer('monkee', 'running', 'healthy', None, detail))
-        self.assertEqual(result.status, 'operational')
+        self.assertEqual(result.status, 'unknown')
         self.assertIsNone(result.core_available)
         self.assertIsNone(result.full_available)
 
@@ -235,7 +235,7 @@ class IntegrationTests(unittest.TestCase):
         self.assertIsNone(row['core_available'])
         self.assertIsNone(row['full_available'])
         public = self.service.public_status()['monitors'][0]
-        self.assertEqual(public['status'], 'operational')
+        self.assertEqual(public['status'], 'unknown')
         self.assertEqual(public['application_health']['status'], 'unknown')
 
     def test_unknown_optional_evidence_keeps_explicit_core_measurement(self):

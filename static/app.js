@@ -55,7 +55,14 @@ function healthDetails(detail) {
     if (component.latencyMs != null) row.append(el('span', '', ' · ' + component.latencyMs + ' ms'));
     if (component.reason) row.append(el('span', '', ' · ' + component.reason));
     if (component.reconnectAttempts != null) row.append(el('span', '', ' · Reconnects: ' + component.reconnectAttempts));
+    row.append(el('div', '', (component.measurementType === 'passive' ? 'Passive observation' : 'Active check') +
+      (component.stale ? ' · Stale' : '') +
+      (component.intervalMs ? ' · Every ' + Math.round(component.intervalMs / 1000) + 's' : '')));
+    row.append(el('div', '', 'Last attempt: ' + stamp(component.lastAttempt) +
+      ' · Last measurement: ' + stamp(component.lastMeasurement)));
     row.append(el('div', '', 'Last success: ' + stamp(component.lastSuccess) +
+      ' · Last failure: ' + stamp(component.lastFailure)));
+    row.append(el('div', '', 'Status changed: ' + stamp(component.lastStatusChange) +
       ' · Failures: ' + (component.consecutiveFailures || 0)));
     panel.append(row);
   }

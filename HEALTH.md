@@ -29,8 +29,12 @@ and their Docker HEALTHCHECK commands are preserved and independent of workloads
 
 Statuses are `operational`, `degraded`, `down`, `unknown`. Core availability is
 `true`, `false`, or `null` when not established. Components can additionally
-include `lastAttempt`, `lastSuccess`, `consecutiveFailures`, and
-`consecutiveRecoveries`. Use timezone-qualified timestamps. Publishing
+include `lastAttempt`, `lastSuccess`, `lastFailure`, `lastMeasurement`,
+`lastStatusChange`, `consecutiveFailures`, and `consecutiveRecoveries`. Use
+timezone-qualified UTC timestamps. `measurementType: passive` identifies feature
+observations which are displayed but cannot be critical or determine availability.
+Active components can publish `intervalMs` and `staleAfterMs`; their measurement
+times expire independently even when the enclosing report is fresh. Publishing
 applications should never include secrets or arbitrary errors in this contract.
 
 The shared parser limits components to 16, component names to 32 characters,
@@ -50,7 +54,8 @@ in the future are rejected as stale evidence.
 If detailed data is absent, ordinary Docker mapping continues unchanged. For a
 previously observed publisher, missing/stale detail is shown as Unknown detail;
 fallback Docker health does not manufacture full operational or core application
-availability. Confirmed Docker Down still establishes unavailability. Ordinary
+availability, even if Docker retains an older healthy/unhealthy label. A stopped
+or paused container still establishes unavailability. Ordinary
 containers without a contract continue to record their existing state checks.
 
 ## Persistence and history
@@ -122,6 +127,22 @@ Availability queries stream narrow rows rather than loading component JSON or
 whole histories into memory. Summaries are cached for up to 30 seconds. Latest
 health is read locally in the application; no external dependency is probed on
 a dashboard request.
+
+The background worker starts with the server and runs regardless of HTTP traffic.
+Individual probe/persistence failures do not prevent other monitors being checked.
+Monitor intervals remain configurable in Admin. `HEALTH_MONITOR_FRESHNESS_FACTOR`
+defaults to 2 (allowed 2–10), and `HEALTH_RESPONSE_SLOW_MS` defaults to 2000 for
+HTTP/TCP latency degradation. A slow successful check still records core success.
+New history rows retain their freshness duration; configuration changes do not
+rewrite the validity of old observations. Legacy rows retain their original
+twice-interval calculations.
+
+Monitor API timestamps distinguish `last_attempt`, `last_checked` (poll completion),
+`last_measurement` (source measurement), `last_success`, `last_failure` (failed
+poll), and `last_status_change`. Repeated cached Docker snapshots do not advance
+source success/measurement times. The public `updated_at` comes from the latest
+completed poll rather than a dashboard request. Component details display the
+five component timestamps, active/passive mode, interval, and stale evidence.
 
 ## Deployment and tests
 

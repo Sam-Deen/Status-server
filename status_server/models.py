@@ -49,6 +49,9 @@ class Monitor:
     docker_state_since: str | None
     application_health: str | None = None
     application_health_valid: bool = False
+    last_attempt: str | None = None
+    last_failure: str | None = None
+    last_measurement: str | None = None
 
     @classmethod
     def from_record(cls, record: Mapping) -> Monitor:
@@ -82,6 +85,7 @@ class CheckResult:
     full_available: bool | None = None
     observed_at: str | None = None
     valid_until: str | None = None
+    attempted_at: str | None = None
 
 
 @dataclass(frozen=True)
@@ -98,3 +102,6 @@ class Transition:
     full_available: bool | None = None
     observed_at: str | None = None
     valid_until: str | None = None
+    attempted_at: str | None = None
+    failed: bool = False
+    stale_after_seconds: float | None = None

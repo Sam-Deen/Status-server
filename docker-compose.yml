@@ -11,6 +11,8 @@ services:
       DB_PATH: /data/status.db
       PORT: 8080
       DOCKER_PROXY_URL: http://docker_proxy:8090/containers
+      HEALTH_MONITOR_FRESHNESS_FACTOR: ${HEALTH_MONITOR_FRESHNESS_FACTOR:-2}
+      HEALTH_RESPONSE_SLOW_MS: ${HEALTH_RESPONSE_SLOW_MS:-2000}
     ports:
       - "${BIND_ADDRESS:-127.0.0.1}:${HOST_PORT:-8088}:8080"
     volumes:

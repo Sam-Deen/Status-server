@@ -70,10 +70,14 @@ class Database:
                 db.execute("ALTER TABLE monitors ADD COLUMN application_health TEXT")
             if "application_health_valid" not in columns:
                 db.execute("ALTER TABLE monitors ADD COLUMN application_health_valid INTEGER NOT NULL DEFAULT 0")
+            for column in ('last_attempt', 'last_failure', 'last_measurement'):
+                if column not in columns:
+                    db.execute(f'ALTER TABLE monitors ADD COLUMN {column} TEXT')
             check_columns = {row["name"] for row in db.execute("PRAGMA table_info(checks)")}
             for column, kind in (("core_available", "INTEGER"), ("full_available", "INTEGER"),
                                  ("observed_at", "TEXT"), ("valid_until", "TEXT"),
-                                 ("interval_seconds", "INTEGER"), ("application_health", "TEXT")):
+                                 ("interval_seconds", "INTEGER"), ("application_health", "TEXT"),
+                                 ("stale_after_seconds", "REAL")):
                 if column not in check_columns:
                     db.execute(f"ALTER TABLE checks ADD COLUMN {column} {kind}")
             incident_columns = {row["name"] for row in db.execute("PRAGMA table_info(incidents)")}
@@ -162,32 +166,34 @@ class MonitorRepository:
                        last_success=CASE WHEN ? THEN ? ELSE last_success END,
                        state_since=CASE WHEN ? THEN ? ELSE state_since END,
                        failures=?,next_check=?,docker_state=?,docker_health=?,docker_state_since=?,application_health=?,
-                       application_health_valid=?
+                       application_health_valid=?,last_attempt=?,last_measurement=?,
+                       last_failure=CASE WHEN ? THEN ? ELSE last_failure END
                        WHERE id=? AND enabled=1 AND type=? AND target=?""",
                        (result.status, result.response_ms, result.checked_at,
                         int(result.core_available is True), result.observed_at or result.checked_at,
                         int(result.state_changed), result.checked_at,
                         result.failures, result.next_check, docker.state if docker else None,
                         docker.health if docker else None, docker.state_since if docker else None, detail,
-                        int(result.valid_until is not None),
+                        int(result.valid_until is not None), result.attempted_at or result.checked_at,
+                        result.observed_at or result.checked_at, int(result.failed), result.checked_at,
                         monitor.id, monitor.type, monitor.target))
             if not cursor.rowcount:
                 return False
-            previous_check = db.execute("""SELECT checked_at,interval_seconds,valid_until FROM checks
+            previous_check = db.execute("""SELECT checked_at,interval_seconds,valid_until,stale_after_seconds FROM checks
                                            WHERE monitor_id=? ORDER BY checked_at DESC,id DESC LIMIT 1""",
                                         (monitor.id,)).fetchone()
             db.execute("""INSERT INTO checks(monitor_id,checked_at,success,response_ms,status,core_available,
-                          full_available,observed_at,valid_until,interval_seconds,application_health)
-                          VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                          full_available,observed_at,valid_until,interval_seconds,application_health,stale_after_seconds)
+                          VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
                        (monitor.id, result.checked_at, int(result.success), result.response_ms, result.status,
                         result.core_available, result.full_available, result.observed_at, result.valid_until,
-                        monitor.interval, detail))
+                        monitor.interval, detail, result.stale_after_seconds))
             open_incident = db.execute("SELECT id FROM incidents WHERE monitor_id=? AND ended_at IS NULL",
                                        (monitor.id,)).fetchone()
             boundary = instant(result.checked_at)
             if previous_check:
                 boundary = min(boundary, instant(previous_check['checked_at']) + timedelta(
-                    seconds=2 * (previous_check['interval_seconds'] or monitor.interval)))
+                    seconds=previous_check['stale_after_seconds'] or 2 * (previous_check['interval_seconds'] or monitor.interval)))
                 if previous_check['valid_until']:
                     boundary = min(boundary, instant(previous_check['valid_until']))
             if open_incident and boundary < instant(result.checked_at):
@@ -228,7 +234,7 @@ class MonitorRepository:
     def availability(self, monitor_id: int, start: datetime, end: datetime) -> dict:
         from .availability import measured_availability
         with self.database.connection() as db:
-            rows = db.execute("""SELECT checked_at,interval_seconds,valid_until,status,core_available,full_available
+            rows = db.execute("""SELECT checked_at,interval_seconds,valid_until,status,core_available,full_available,stale_after_seconds
                                  FROM checks WHERE monitor_id=? AND checked_at>=? ORDER BY checked_at,id""",
                               (monitor_id, (start - timedelta(hours=2)).isoformat()))
             return measured_availability(rows, start, end)

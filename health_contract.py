@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import math
 import re
-from datetime import datetime, timezone
+from copy import deepcopy
+from datetime import datetime, timezone, timedelta
 
 STATUSES = {"operational", "degraded", "down", "unknown"}
 REASONS = {"Not measured", "Monitoring result stale", "Response latency elevated", "Operation failed",
@@ -62,8 +63,17 @@ def sanitize_health(value: object) -> dict | None:
             reason = component.get("reason")
             item["reason"] = reason if isinstance(reason, str) and (
                 reason in REASONS or re.fullmatch(r"HTTP [45][0-9]{2}", reason)) else None
-            for key in ("lastAttempt", "lastSuccess"):
-                item[key] = instant(component[key]).isoformat(timespec="milliseconds") if component.get(key) else None
+            for key in ("lastAttempt", "lastSuccess", "lastFailure", "lastMeasurement", "lastStatusChange"):
+                item[key] = instant(component[key]).isoformat(timespec="milliseconds") if component.get(key) is not None else None
+            if 'measurementType' in component:
+                if component['measurementType'] not in {'active', 'passive'} or (critical and component['measurementType'] == 'passive'):
+                    return None
+                item['measurementType'] = component['measurementType']
+            for key in ('intervalMs', 'staleAfterMs'):
+                if key in component:
+                    if not bounded_number(component[key], 604800000) or component[key] < 1000:
+                        return None
+                    item[key] = component[key]
             for key in ("consecutiveFailures", "consecutiveRecoveries"):
                 counter = component.get(key, 0)
                 if not isinstance(counter, int) or isinstance(counter, bool) or not 0 <= counter <= 1000000:
@@ -80,12 +90,46 @@ def sanitize_health(value: object) -> dict | None:
             return None
         if core is False and status != 'down':
             return None
-        if status == 'operational' and any(item['status'] != 'operational' for item in components.values()):
+        if status == 'operational' and any(item['status'] != 'operational' for item in components.values()
+                                           if item.get('measurementType') != 'passive'):
             return None
         return {"contract": "application-health/v1", "status": status, "coreAvailable": core,
                 "timestamp": stamp, "validForMs": ttl, "components": components}
     except (ValueError, TypeError, KeyError, OverflowError):
         return None
+
+
+def current_health(value: dict, now: datetime | None = None) -> dict:
+    """Expire individual measurements without renewing their source timestamps.
+
+    Legacy components without freshness metadata keep the report-level TTL.
+    Passive observations are displayed but do not establish availability.
+    """
+    now = now or datetime.now(timezone.utc)
+    result = deepcopy(value)
+    changed = False
+    for component in result['components'].values():
+        if 'staleAfterMs' not in component:
+            continue
+        stamp = component.get('lastMeasurement')
+        age = (now - instant(stamp)).total_seconds() * 1000 if stamp else None
+        stale = age is None or age < -5000 or age > component['staleAfterMs']
+        component['stale'] = stale
+        if stale and component['status'] != 'unknown':
+            component.update(status='unknown', reason='Monitoring result stale' if stamp else 'Not measured')
+            if stamp:
+                component['lastStatusChange'] = (instant(stamp) + timedelta(milliseconds=component['staleAfterMs'])).isoformat(timespec='milliseconds')
+            changed |= component.get('measurementType') != 'passive'
+    if changed:
+        active = [item for item in result['components'].values() if item.get('measurementType') != 'passive']
+        critical = [item for item in active if item['critical']]
+        core = False if any(item['status'] == 'down' for item in critical) else (
+            None if any(item['status'] == 'unknown' for item in critical) else result['coreAvailable'])
+        result['coreAvailable'] = core
+        result['status'] = 'down' if core is False else 'unknown' if core is None or any(
+            item['status'] == 'unknown' for item in active) else 'degraded' if any(
+            item['status'] != 'operational' for item in active) else 'operational'
+    return result
 
 
 def fresh_health(value: dict, now: datetime | None = None, started_at: str | None = None) -> bool:

@@ -28,7 +28,8 @@ def main() -> None:
     sessions = SessionRepository(database)
     docker_checker = DockerChecker(DockerProxyClient(settings.docker_proxy_url))
     registry = CheckerRegistry([HttpChecker(), TcpChecker(), docker_checker])
-    service = MonitorService(monitors, registry, docker_checker)
+    service = MonitorService(monitors, registry, docker_checker,
+                             freshness_factor=settings.monitor_freshness_factor, slow_ms=settings.response_slow_ms)
     auth = AuthService(settings, sessions)
     server = StatusHTTPServer(settings, service, auth, database, Path(__file__).resolve().parent / "static")
     worker = MonitoringWorker(service, monitors, sessions, settings.retention_days)
