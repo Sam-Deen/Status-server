@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterator
 
-from .models import Monitor, MonitorConfig, Transition, utc_now
+from .models import Monitor, MonitorConfig, Transition, utc_now, INCIDENT_FAILURES
 from health_contract import instant
 from .incidents import merge_details
 
@@ -74,12 +74,17 @@ class Database:
             for column in ('last_attempt', 'last_failure', 'last_measurement'):
                 if column not in columns:
                     db.execute(f'ALTER TABLE monitors ADD COLUMN {column} TEXT')
+            if 'retry_attempts' not in columns:
+                db.execute('ALTER TABLE monitors ADD COLUMN retry_attempts INTEGER NOT NULL DEFAULT 0')
+                db.execute('UPDATE monitors SET failures=0,next_check=0')
+            db.execute('UPDATE monitors SET threshold=? WHERE threshold<>?', (INCIDENT_FAILURES, INCIDENT_FAILURES))
             check_columns = {row["name"] for row in db.execute("PRAGMA table_info(checks)")}
             for column, kind in (("core_available", "INTEGER"), ("full_available", "INTEGER"),
                                  ("observed_at", "TEXT"), ("valid_until", "TEXT"),
                                  ("interval_seconds", "INTEGER"), ("application_health", "TEXT"),
                                  ("stale_after_seconds", "REAL"), ("reason", "TEXT"),
-                                 ("monitor_type", "TEXT"), ("docker_state", "TEXT"), ("docker_health", "TEXT")):
+                                 ("monitor_type", "TEXT"), ("docker_state", "TEXT"), ("docker_health", "TEXT"),
+                                 ("reported_status", "TEXT")):
                 if column not in check_columns:
                     db.execute(f"ALTER TABLE checks ADD COLUMN {column} {kind}")
             incident_columns = {row["name"] for row in db.execute("PRAGMA table_info(incidents)")}
@@ -92,7 +97,7 @@ class Database:
             for previous, current in (("status-status-1", "status-server"),
                                       ("homelab-status-docker-proxy", "status-docker-proxy")):
                 db.execute("""UPDATE monitors SET target=?,status='unknown',response_ms=NULL,failures=0,
-                          next_check=0,state_since=?,docker_state=NULL,docker_health=NULL,docker_state_since=NULL
+                          next_check=0,retry_attempts=0,state_since=?,docker_state=NULL,docker_health=NULL,docker_state_since=NULL
                           WHERE type='docker' AND target=?""", (current, utc_now(), previous))
 
     def healthy(self) -> bool:
@@ -130,6 +135,13 @@ class MonitorRepository:
                                    VALUES(?,?,?,?,?,?,?,?)""", config.db_values())
             return cursor.lastrowid
 
+    def latest_check(self, monitor_id: int) -> dict | None:
+        with self.database.connection() as db:
+            row = db.execute('''SELECT checked_at,interval_seconds,stale_after_seconds,valid_until
+                                FROM checks WHERE monitor_id=? ORDER BY checked_at DESC,id DESC LIMIT 1''',
+                             (monitor_id,)).fetchone()
+            return dict(row) if row else None
+
     def update(self, old: Monitor, config: MonitorConfig, reset: bool) -> bool:
         neutral = reset or not config.enabled
         status = "unknown" if neutral else old.status
@@ -146,14 +158,15 @@ class MonitorRepository:
                 db.execute("UPDATE incidents SET ended_at=?,ended_reason='configuration changed' WHERE monitor_id=? AND ended_at IS NULL",
                            (utc_now(), old.id))
             cursor = db.execute("""UPDATE monitors SET name=?,description=?,type=?,target=?,interval=?,timeout=?,threshold=?,enabled=?,
-                     status=?,failures=?,response_ms=CASE WHEN ? THEN NULL ELSE response_ms END,
+                     status=?,failures=?,retry_attempts=CASE WHEN ? THEN 0 ELSE retry_attempts END,
+                     response_ms=CASE WHEN ? THEN NULL ELSE response_ms END,
                      next_check=0,state_since=CASE WHEN ? THEN ? ELSE state_since END,
                      docker_state=CASE WHEN ? THEN NULL ELSE docker_state END,
                      docker_health=CASE WHEN ? THEN NULL ELSE docker_health END,
                      docker_state_since=CASE WHEN ? THEN NULL ELSE docker_state_since END,
                      application_health=CASE WHEN ? THEN NULL ELSE application_health END,
                      application_health_valid=CASE WHEN ? THEN 0 ELSE application_health_valid END WHERE id=?""",
-                     (*config.db_values(), status, failures, int(neutral), int(neutral), utc_now(),
+                     (*config.db_values(), status, failures, int(neutral), int(neutral), int(neutral), utc_now(),
                       int(neutral), int(neutral), int(neutral), int(neutral), int(neutral), old.id))
             return cursor.rowcount > 0
 
@@ -169,14 +182,14 @@ class MonitorRepository:
             cursor = db.execute("""UPDATE monitors SET status=?,response_ms=?,last_checked=?,
                        last_success=CASE WHEN ? THEN ? ELSE last_success END,
                        state_since=CASE WHEN ? THEN ? ELSE state_since END,
-                       failures=?,next_check=?,docker_state=?,docker_health=?,docker_state_since=?,application_health=?,
+                       failures=?,retry_attempts=?,next_check=?,docker_state=?,docker_health=?,docker_state_since=?,application_health=?,
                        application_health_valid=?,last_attempt=?,last_measurement=?,
                        last_failure=CASE WHEN ? THEN ? ELSE last_failure END
                        WHERE id=? AND enabled=1 AND type=? AND target=?""",
                        (result.status, result.response_ms, result.checked_at,
                         int(result.core_available is True), result.observed_at or result.checked_at,
                         int(result.state_changed), result.checked_at,
-                        result.failures, result.next_check, docker.state if docker else None,
+                        result.failures, result.retry_attempts, result.next_check, docker.state if docker else None,
                         docker.health if docker else None, docker.state_since if docker else None, detail,
                         int(result.valid_until is not None), result.attempted_at or result.checked_at,
                         result.observed_at or result.checked_at, int(result.failed), result.checked_at,
@@ -188,12 +201,12 @@ class MonitorRepository:
                                         (monitor.id,)).fetchone()
             check_id = db.execute("""INSERT INTO checks(monitor_id,checked_at,success,response_ms,status,core_available,
                           full_available,observed_at,valid_until,interval_seconds,application_health,stale_after_seconds,
-                          reason,monitor_type,docker_state,docker_health)
-                          VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                       (monitor.id, result.checked_at, int(result.success), result.response_ms, result.status,
+                          reason,monitor_type,docker_state,docker_health,reported_status)
+                          VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                       (monitor.id, result.checked_at, int(result.success), result.response_ms, result.observed_status or result.status,
                         result.core_available, result.full_available, result.observed_at, result.valid_until,
                         monitor.interval, detail, result.stale_after_seconds, result.reason, monitor.type,
-                        docker.state if docker else None, docker.health if docker else None)).lastrowid
+                        docker.state if docker else None, docker.health if docker else None, result.status)).lastrowid
             open_incident = db.execute("SELECT * FROM incidents WHERE monitor_id=? AND ended_at IS NULL",
                                        (monitor.id,)).fetchone()
             boundary = instant(result.checked_at)
@@ -208,8 +221,24 @@ class MonitorRepository:
                 open_incident = None
             if result.status == "operational" and open_incident:
                 db.execute("UPDATE incidents SET ended_at=?,ended_reason='recovered' WHERE id=?", (result.checked_at, open_incident["id"]))
-            elif result.status in {"degraded", "down"}:
+            elif result.status in {"degraded", "down"} and result.failures >= INCIDENT_FAILURES:
                 previous = self._incident_details(db, dict(open_incident), before_check_id=check_id) if open_incident else None
+                started_at = result.checked_at
+                severity = result.status
+                if not open_incident:
+                    # Include the confirming streak, so the incident retains its
+                    # original onset and all three pieces of evidence.
+                    pending = db.execute('''SELECT * FROM checks WHERE monitor_id=? AND id<?
+                                            ORDER BY checked_at DESC,id DESC LIMIT ?''',
+                                         (monitor.id, check_id, INCIDENT_FAILURES - 1)).fetchall()
+                    for row in reversed(pending):
+                        if row['status'] in {'degraded', 'down'}:
+                            check = dict(row)
+                            check['application_health'] = json.loads(check['application_health']) if check['application_health'] else None
+                            previous = merge_details(previous, check)
+                            started_at = min(started_at, check['checked_at'])
+                            if check['status'] == 'down':
+                                severity = 'down'
                 evidence = merge_details(previous, {
                     'checked_at': result.checked_at, 'status': result.status, 'response_ms': result.response_ms,
                     'reason': result.reason, 'monitor_type': monitor.type, 'valid_until': result.valid_until,
@@ -218,7 +247,7 @@ class MonitorRepository:
                 encoded = json.dumps(evidence, separators=(',', ':'))
                 if not open_incident:
                     db.execute("INSERT INTO incidents(monitor_id,started_at,severity,details) VALUES(?,?,?,?)",
-                               (monitor.id, result.checked_at, result.status, encoded))
+                               (monitor.id, started_at, severity, encoded))
                 else:
                     db.execute("UPDATE incidents SET severity=CASE WHEN ?='down' THEN 'down' ELSE severity END,details=? WHERE id=?",
                                (result.status, encoded, open_incident['id']))
@@ -248,7 +277,8 @@ class MonitorRepository:
     def availability(self, monitor_id: int, start: datetime, end: datetime) -> dict:
         from .availability import measured_availability
         with self.database.connection() as db:
-            rows = db.execute("""SELECT checked_at,interval_seconds,valid_until,status,core_available,full_available,stale_after_seconds
+            rows = db.execute("""SELECT checked_at,interval_seconds,valid_until,COALESCE(reported_status,status) status,
+                                        core_available,full_available,stale_after_seconds
                                  FROM checks WHERE monitor_id=? AND checked_at>=? ORDER BY checked_at,id""",
                               (monitor_id, (start - timedelta(hours=2)).isoformat()))
             return measured_availability(rows, start, end)

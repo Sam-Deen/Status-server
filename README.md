@@ -64,11 +64,13 @@ Sign in at `/admin` with the values from `.env`. Sessions last 12 hours and surv
 
 ## Add monitors
 
-Use **Add monitor** in Admin. HTTP/HTTPS targets are full URLs. TCP targets are `host:port` or `[IPv6]:port`. The check interval is 10–3600 seconds; timeout is 1–30 seconds and below the interval. HTTP/TCP failure threshold is 1–10 consecutive failures: the first failure is Degraded, then Down at the threshold. Docker states map directly.
+Use **Add monitor** in Admin. HTTP/HTTPS targets are full URLs. TCP targets are `host:port` or `[IPv6]:port`. The healthy check interval is 10–3600 seconds; timeout is 1–30 seconds and below the interval. All monitor types require three consecutive impaired checks before reporting Degraded or Down and creating an incident. The first two failures retain a previously Operational status; a new monitor stays Unknown until confirmed. A healthy check immediately recovers and resets the streak.
+
+After a failed check, retry after 1 second, then 3, 5, 15, 30, and 60 seconds after each subsequent failure. Continued failures are checked every minute, regardless of the healthy interval. Unknown results also use this retry schedule, but break the incident confirmation streak. Monitoring gaps reset the streak. Retry state survives restarts. Incidents retain the first failure time and all three confirming checks; raw measurements remain available in administrator history and measured availability, while status history uses the confirmed monitor status. Existing historical incidents are preserved.
 
 For **Docker Container**, choose a discovered running or stopped container from the dropdown. Use **Refresh containers** after adding a container. The container name is stored as the monitor target, so recreation under the same name continues monitoring. A reused name could refer to a different workload; review its monitor when reusing names. The admin interface states when a running container has no HEALTHCHECK: only its running state is monitored.
 
-Recent incidents show recorded component failures, criticality, reasons, and latency ranges when detailed application health is available. They distinguish core functionality from optional dependencies and identify when only an endpoint or container was checked. Older incidents use their retained check history; missing evidence is shown as not recorded. A successful HTTP/TCP check taking longer than `HEALTH_RESPONSE_SLOW_MS` (2000 ms by default) is also Degraded.
+Recent incidents show recorded component failures, criticality, reasons, and latency ranges when detailed application health is available. They distinguish core functionality from optional dependencies and identify when only an endpoint or container was checked. Older incidents use their retained check history; missing evidence is shown as not recorded. A successful HTTP/TCP check taking longer than `HEALTH_RESPONSE_SLOW_MS` (2000 ms by default) counts as an impaired check and reports Degraded after three consecutive impaired checks.
 
 | Docker state | Status |
 | --- | --- |

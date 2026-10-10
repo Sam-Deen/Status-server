@@ -5,6 +5,13 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Mapping
 
+INCIDENT_FAILURES = 3
+RETRY_DELAYS = (1, 3, 5, 15, 30, 60)
+
+
+def retry_delay(attempts: int) -> int:
+    return RETRY_DELAYS[min(attempts, len(RETRY_DELAYS)) - 1]
+
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
@@ -23,7 +30,7 @@ class MonitorConfig:
 
     def db_values(self) -> tuple:
         return (self.name, self.description, self.type, self.target, self.interval,
-                self.timeout, self.threshold, int(self.enabled))
+                self.timeout, INCIDENT_FAILURES, int(self.enabled))
 
 
 @dataclass(frozen=True)
@@ -52,6 +59,7 @@ class Monitor:
     last_attempt: str | None = None
     last_failure: str | None = None
     last_measurement: str | None = None
+    retry_attempts: int = 0
 
     @classmethod
     def from_record(cls, record: Mapping) -> Monitor:
@@ -107,3 +115,5 @@ class Transition:
     failed: bool = False
     stale_after_seconds: float | None = None
     reason: str | None = None
+    observed_status: str | None = None
+    retry_attempts: int = 0

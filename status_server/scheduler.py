@@ -31,13 +31,12 @@ class MonitoringWorker:
     def _run(self) -> None:
         last_cleanup = 0.0
         while not self.stop_event.is_set():
-            count = 0
             try:
-                count = self.service.check_due()
+                self.service.check_due()
                 if time.time() - last_cleanup >= 3600:
                     self.monitors.cleanup(self.retention_days)
                     self.sessions.cleanup()
                     last_cleanup = time.time()
             except Exception as exc:
                 LOG.error("monitoring cycle failed: %s", type(exc).__name__)
-            self.stop_event.wait(1 if count else 3)
+            self.stop_event.wait(1)

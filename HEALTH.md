@@ -44,9 +44,13 @@ versions and malformed/truncated responses fall back to ordinary Docker state.
 The 4,096-byte Docker output limit requires a compact publisher snapshot.
 There is no special case for Monkee or an application-specific URL in the checker.
 
-A fresh valid snapshot determines application status while the container is
-running. A stopped/paused/missing container overrides a previous healthy
-snapshot. Source timestamps expire independently of Status Server polling and
+A fresh valid snapshot supplies the application measurement while the container
+is running. A stopped/paused/missing container overrides a previous healthy
+snapshot. Status Server confirms Degraded or Down after three consecutive
+impaired checks for every monitor type. Failed checks retry after 1, 3, 5, 15,
+30, then 60 seconds, continuing once per minute; a healthy check immediately
+recovers and resumes the configured interval. Unknown checks and monitoring gaps
+break the confirmation streak. Source timestamps expire independently of polling and
 must be no earlier than the container start time. Repeated polling of one
 snapshot cannot extend its validity. Clock timestamps more than five seconds
 in the future are rejected as stale evidence.

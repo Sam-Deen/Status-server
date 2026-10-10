@@ -203,6 +203,9 @@ class IntegrationTests(unittest.TestCase):
 
     def test_detail_flows_into_existing_monitor_history_public_api_and_survives_restart(self):
         self.service.check_due()
+        for _ in range(2):
+            monitor = self.repository.get(self.ident)
+            self.service.record_result(monitor, self.checker.check_many([monitor])[self.ident])
         item = self.service.public_status()['monitors'][0]
         self.assertEqual(item['status'], 'degraded')
         self.assertEqual(len(item['measured_availability']['history']), 90)
@@ -248,17 +251,16 @@ class IntegrationTests(unittest.TestCase):
 
     def test_new_outage_after_monitoring_gap_is_a_separate_observed_incident(self):
         monitor = self.repository.get(self.ident)
-        detail = sanitize_health(snapshot('degraded'))
-        result = self.checker.state_result(DockerContainer('monkee', 'running', 'healthy', None, detail))
-        with patch('status_server.service.utc_now', return_value='2026-01-01T00:00:00+00:00'):
-            self.service.record_result(monitor, result)
-        with patch('status_server.service.utc_now', return_value='2026-01-01T00:10:00+00:00'):
-            self.service.record_result(monitor, result)
+        result = self.checker.state_result(DockerContainer('monkee', 'exited', 'none', None))
+        start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        for seconds in (0, 1, 4, 600, 601, 604):
+            with patch('status_server.service.utc_now', return_value=(start + timedelta(seconds=seconds)).isoformat()):
+                self.service.record_result(monitor, result)
         incidents = self.repository.incidents(10)
         self.assertEqual(len(incidents), 2)
         ended = next(item for item in incidents if item['ended_at'])
         self.assertEqual(ended['ended_reason'], 'monitoring gap')
-        self.assertEqual(ended['ended_at'], '2026-01-01T00:02:00+00:00')
+        self.assertEqual(ended['ended_at'], '2026-01-01T00:02:04+00:00')
 
     def test_stalled_monitoring_worker_cannot_leave_public_status_operational(self):
         self.service.check_due()

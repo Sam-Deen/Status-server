@@ -67,7 +67,10 @@ class StatusTests(unittest.TestCase):
         monitor_id = self.service.create(self.config())
         monitor = self.repository.get(monitor_id)
         self.service.record_result(monitor, CheckResult(False))
-        self.assertEqual(self.repository.get(monitor_id).status, "degraded")
+        self.assertEqual(self.repository.get(monitor_id).status, "unknown")
+        self.service.record_result(monitor, CheckResult(False))
+        self.assertEqual(self.repository.get(monitor_id).status, "unknown")
+        self.assertEqual(self.repository.incidents(10), [])
         self.service.record_result(monitor, CheckResult(False))
         self.assertEqual(self.repository.get(monitor_id).status, "down")
         incidents = self.repository.incidents(10)
@@ -77,11 +80,11 @@ class StatusTests(unittest.TestCase):
         self.assertEqual(self.repository.get(monitor_id).status, "operational")
         self.assertIsNotNone(self.repository.incidents(10)[0]["ended_at"])
         public = self.service.public_status()["monitors"][0]
-        self.assertEqual(public["uptime"], 33.33)
+        self.assertEqual(public["uptime"], 25.0)
         self.assertNotIn("target", public)
         reopened = MonitorRepository(Database(self.path))
         self.assertEqual(reopened.get(monitor_id).status, "operational")
-        self.assertEqual(len(reopened.history(monitor_id)), 3)
+        self.assertEqual(len(reopened.history(monitor_id)), 4)
 
     def test_docker_mapping_unknown_and_selection(self):
         monitor_id = self.service.create(self.config(name="Background Worker", type="docker",
@@ -116,7 +119,8 @@ class StatusTests(unittest.TestCase):
         for status in ('operational', 'degraded', 'down', 'unknown'):
             with self.subTest(status=status):
                 success = None if status == 'unknown' else status == 'operational'
-                self.service.record_result(self.repository.get(known_id), CheckResult(success, status=status))
+                for _ in range(3 if status in {'degraded', 'down'} else 1):
+                    self.service.record_result(self.repository.get(known_id), CheckResult(success, status=status))
                 result = self.service.public_status()
                 self.assertEqual(result['overall'], status)
                 self.assertEqual({m['status'] for m in result['monitors']}, {status, 'unknown'})

@@ -90,7 +90,8 @@ class FreshnessTests(unittest.TestCase):
 
     def test_slow_probe_degrades_and_failures_recover_with_distinct_timestamps(self):
         ident = self.repository.create(MonitorConfig('Web', '', 'http', 'http://localhost', 60, 5, 2, True))
-        self.service.record_result(self.repository.get(ident), CheckResult(True, 3000))
+        for _ in range(3):
+            self.service.record_result(self.repository.get(ident), CheckResult(True, 3000))
         monitor = self.repository.get(ident)
         self.assertEqual(monitor.status, 'degraded')
         self.assertIsNotNone(monitor.last_success)

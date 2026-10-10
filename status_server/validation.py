@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from .checks import CheckerRegistry
-from .models import MonitorConfig
+from .models import MonitorConfig, INCIDENT_FAILURES
 
 
 class InvalidMonitor(ValueError):
@@ -35,4 +35,4 @@ def parse_monitor(data: object, registry: CheckerRegistry) -> MonitorConfig:
     enabled = data.get("enabled", True)
     if not isinstance(enabled, bool):
         raise InvalidMonitor("Enabled must be true or false")
-    return MonitorConfig(name, description, kind, target, interval, timeout, threshold, enabled)
+    return MonitorConfig(name, description, kind, target, interval, timeout, INCIDENT_FAILURES, enabled)

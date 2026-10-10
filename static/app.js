@@ -264,7 +264,6 @@ function syncMonitorType(selected='') {
   $('docker-target-label').hidden=!docker;
   $('docker-controls').hidden=!docker;
   $('timeout-label').hidden=docker;
-  $('threshold-label').hidden=docker;
   form.elements.target.disabled=docker;
   form.elements.docker_target.disabled=!docker;
   if (docker) loadDockerChoices(selected);
@@ -350,7 +349,7 @@ $('monitor-form').addEventListener('submit',async event=>{
   const docker=f.elements.type.value==='docker';
   const data={name:f.elements.name.value,description:f.elements.description.value,type:f.elements.type.value,
     target:docker?f.elements.docker_target.value:f.elements.target.value,interval:Number(f.elements.interval.value),
-    timeout:docker?5:Number(f.elements.timeout.value),threshold:docker?1:Number(f.elements.threshold.value),enabled:f.elements.enabled.checked};
+    timeout:docker?5:Number(f.elements.timeout.value),threshold:3,enabled:f.elements.enabled.checked};
   try {await api(editing?`/api/admin/monitors/${editing}`:'/api/admin/monitors',
     {method:editing?'PUT':'POST',body:JSON.stringify(data)});f.hidden=true;editing=null;await refreshAdmin();}
   catch(err){$('monitor-message').textContent=err.message;}

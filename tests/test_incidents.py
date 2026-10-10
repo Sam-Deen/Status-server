@@ -44,8 +44,12 @@ class IncidentTests(unittest.TestCase):
     def incident(self):
         return self.repo.incidents(20, public=True)[0]
 
+    def confirm(self, seconds, *args, **kwargs):
+        for offset in (0, 1, 4):
+            self.record(seconds + offset, *args, **kwargs)
+
     def test_optional_component_outage_keeps_core_available_and_excludes_recovery_latency(self):
-        self.record(0)
+        self.confirm(0)
         self.record(60, components={
             'application': {'status': 'operational', 'critical': True, 'latencyMs': 18},
             'gameApi': {'status': 'degraded', 'latencyMs': 2500, 'reason': 'Response latency elevated'}})
@@ -55,7 +59,7 @@ class IncidentTests(unittest.TestCase):
         incident = self.service.public_status()['incidents'][0]
         self.assertEqual(incident['ended_reason'], 'recovered')
         detail = incident['details']
-        self.assertEqual(detail['check_count'], 2)
+        self.assertEqual(detail['check_count'], 4)
         self.assertEqual(detail['core_states'], ['available'])
         self.assertEqual(detail['response_ms'], {'min': 12, 'max': 18})
         component = detail['components']['gameApi']
@@ -65,7 +69,7 @@ class IncidentTests(unittest.TestCase):
         self.assertEqual(component['reasons'], ['Request timed out', 'Response latency elevated'])
 
     def test_escalation_retains_optional_failure_and_adds_critical_database_outage(self):
-        self.record(0)
+        self.confirm(0)
         self.record(60, 'down', False, {
             'application': {'status': 'operational', 'critical': True, 'latencyMs': 15},
             'database': {'status': 'down', 'critical': True, 'reason': 'Database query failed'}})
@@ -77,7 +81,7 @@ class IncidentTests(unittest.TestCase):
         self.assertIn('gameApi', incident['details']['components'])
 
     def test_evidence_survives_database_restart_and_raw_check_removal(self):
-        self.record(0)
+        self.confirm(0)
         before = self.incident()
         Database(self.db.path).initialize()
         with self.db.connection() as db:
@@ -86,7 +90,7 @@ class IncidentTests(unittest.TestCase):
         self.assertEqual(reopened.incidents(20, public=True)[0], before)
 
     def test_legacy_incident_reconstructed_from_its_checks_only_and_cached(self):
-        self.record(0)
+        self.confirm(0)
         self.record(60, 'operational', components={
             'application': {'status': 'operational', 'critical': True, 'latencyMs': 1}})
         first = self.incident()
@@ -102,14 +106,14 @@ class IncidentTests(unittest.TestCase):
         self.assertEqual(next(item for item in self.repo.incidents(20) if item['id'] == first['id']), restored)
 
     def test_legacy_open_incident_backfills_before_appending_without_double_counting(self):
-        self.record(0)
+        self.confirm(0)
         with self.db.connection() as db:
             db.execute('UPDATE incidents SET details=NULL')
         self.record(60)
-        self.assertEqual(self.incident()['details']['check_count'], 2)
+        self.assertEqual(self.incident()['details']['check_count'], 4)
 
     def test_missing_historical_checks_do_not_borrow_current_components(self):
-        self.record(0)
+        self.confirm(0)
         with self.db.connection() as db:
             db.execute('UPDATE incidents SET details=NULL')
             db.execute('DELETE FROM checks')
@@ -119,14 +123,15 @@ class IncidentTests(unittest.TestCase):
         self.assertIsNone(detail['response_ms'])
 
     def test_stopped_container_does_not_reuse_previous_component_snapshot(self):
-        self.record(0)
+        self.confirm(0)
         self.record(60, 'operational', components={
             'application': {'status': 'operational', 'critical': True, 'latencyMs': 12}})
-        at = (self.start + timedelta(seconds=120)).isoformat()
-        with patch('status_server.service.utc_now', return_value=at):
-            self.service.record_result(self.repo.get(self.ident), CheckResult(
-                False, status='down', docker=DockerContainer('example', 'exited', 'none', None),
-                core_available=False, full_available=False))
+        for seconds in (120, 121, 124):
+            at = (self.start + timedelta(seconds=seconds)).isoformat()
+            with patch('status_server.service.utc_now', return_value=at):
+                self.service.record_result(self.repo.get(self.ident), CheckResult(
+                    False, status='down', docker=DockerContainer('example', 'exited', 'none', None),
+                    core_available=False, full_available=False))
         detail = self.incident()['details']
         self.assertEqual(detail['sources'], ['docker'])
         self.assertEqual(detail['container_states'], ['exited'])
@@ -138,7 +143,7 @@ class IncidentTests(unittest.TestCase):
         self.assertEqual(self.incident()['details'], detail)
 
     def test_passive_failure_is_identified_as_an_observation_not_a_critical_dependency(self):
-        self.record(0, components={
+        self.confirm(0, components={
             'application': {'status': 'degraded', 'critical': True, 'latencyMs': 3000,
                             'reason': 'Response latency elevated'},
             'feature': {'status': 'down', 'measurementType': 'passive', 'reason': 'Operation failed'}})
@@ -164,7 +169,7 @@ class IncidentTests(unittest.TestCase):
         self.assertEqual(self.repo.history(ident)[1]['reason'], 'HTTP 503')
 
     def test_legacy_checks_without_validity_do_not_establish_component_health(self):
-        self.record(0)
+        self.confirm(0)
         with self.db.connection() as db:
             db.execute('UPDATE incidents SET details=NULL')
             db.execute('UPDATE checks SET valid_until=NULL,monitor_type=NULL')
@@ -173,9 +178,9 @@ class IncidentTests(unittest.TestCase):
         self.assertEqual(detail['components'], {})
 
     def test_monitoring_gap_splits_evidence_between_distinct_incidents(self):
-        self.record(0)
+        self.confirm(0)
         first = self.incident()
-        self.record(600, 'down', False, {
+        self.confirm(600, 'down', False, {
             'application': {'status': 'down', 'critical': True, 'reason': 'Event loop stalled'}})
         incidents = self.repo.incidents(20)
         self.assertEqual(len(incidents), 2)
@@ -185,7 +190,7 @@ class IncidentTests(unittest.TestCase):
         self.assertNotIn('gameApi', self.incident()['details']['components'])
 
     def test_expired_report_is_not_used_as_historical_component_evidence(self):
-        self.record(0)
+        self.confirm(0)
         with self.db.connection() as db:
             db.execute('UPDATE incidents SET details=NULL')
             db.execute('UPDATE checks SET valid_until=?', ((self.start - timedelta(seconds=1)).isoformat(),))
@@ -209,7 +214,7 @@ class IncidentTests(unittest.TestCase):
             self.assertIsNone(result.response_ms)
 
     def test_reasons_are_filtered_and_disabled_monitors_stay_private(self):
-        self.record(0, components={
+        self.confirm(0, components={
             'application': {'status': 'degraded', 'critical': True, 'latencyMs': 3000,
                             'reason': 'token=secret'}})
         self.assertNotIn('secret', json.dumps(self.incident()))
