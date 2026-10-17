@@ -3,3 +3,20 @@
 .state-duration{color:var(--muted);font-size:11px;margin-left:16px;margin-top:2px}
 
 .docker-controls{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:2px 0 12px}.field-note{color:var(--muted);font-size:11px;font-weight:400}.docker-controls button{font-size:12px}
+
+.latency-card{min-width:0;margin-top:14px;padding:14px 16px;background:var(--surface);border:1px solid var(--line);border-radius:3px}
+.latency-heading{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap}
+.latency-heading h3{font-size:13px;font-weight:600;margin:0;overflow-wrap:anywhere}
+.latency-heading>span{font-size:12px}
+.latency-viewport{overflow-x:auto;margin-top:8px}
+.latency-chart{display:block;width:100%;min-width:320px;height:210px;touch-action:pan-y}
+.latency-chart:focus-visible{outline:2px solid var(--cyan);outline-offset:-2px}
+.latency-grid{stroke:var(--line);stroke-width:1}
+.latency-axis{fill:var(--muted);font-size:11px;font-variant-numeric:tabular-nums}
+.latency-cursor{stroke:var(--muted);stroke-dasharray:3 4;pointer-events:none}
+.latency-legend{display:flex;flex-wrap:wrap;gap:8px 18px;font-size:12px;color:var(--muted)}
+.latency-legend>span{display:flex;align-items:center;gap:7px;overflow-wrap:anywhere}
+.latency-legend svg{width:20px;height:8px;flex:none}
+.latency-readout{min-height:32px;margin-top:9px;font-size:11px;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.latency-error{padding-top:12px;font-size:12px}
+@media(max-width:700px){.section-head{gap:12px;flex-wrap:wrap}.latency-card{padding:12px 8px}.latency-readout{min-height:48px}}

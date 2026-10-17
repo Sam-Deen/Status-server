@@ -11,7 +11,7 @@ from pathlib import Path
 from status_server.auth import AuthService
 from status_server.checks import CheckerRegistry, DockerChecker, DockerUnavailable, HttpChecker, TcpChecker
 from status_server.config import Settings
-from status_server.models import DockerContainer
+from status_server.models import CheckResult, DockerContainer
 from status_server.repository import Database, MonitorRepository, SessionRepository
 from status_server.service import MonitorService
 from status_server.web import StatusHTTPServer
@@ -100,6 +100,21 @@ class WebTests(unittest.TestCase):
         self.assertEqual(self.request("/api/admin/containers")[0], 503)
         self.assertEqual(self.request("/api/status")[0], 200)
         self.assertEqual(self.request("/healthz")[0], 200)
+
+    def test_public_latency_endpoint_returns_numeric_history_without_private_targets(self):
+        service = self.server.service
+        ident = service.create({'name': 'Web', 'description': '', 'type': 'http',
+                                'target': 'http://private-host/health', 'interval': 60,
+                                'timeout': 5, 'threshold': 3, 'enabled': True})
+        service.record_result(service.repository.get(ident), CheckResult(True, 42))
+        status, data = self.request('/api/latency')
+        self.assertEqual(status, 200)
+        monitor = data['monitors'][0]
+        self.assertEqual(monitor['id'], ident)
+        self.assertEqual(monitor['series'][0]['points'][0][1], 42)
+        self.assertEqual(set(monitor), {'id', 'name', 'series'})
+        self.assertNotIn('private-host', json.dumps(data))
+        self.assertEqual(self.request(f'/api/admin/monitors/{ident}/history')[0], 401)
 
 
 if __name__ == "__main__":

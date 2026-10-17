@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from .checks import CheckerRegistry, DockerChecker
 from .models import CheckResult, Monitor, Transition, utc_now, INCIDENT_FAILURES, retry_delay
 from .repository import MonitorRepository
+from .latency import latency_series
 from .validation import parse_monitor
 from health_contract import fresh_health, instant, current_health
 
@@ -60,6 +61,14 @@ class MonitorService:
 
     def incidents(self) -> list[dict]:
         return self.repository.incidents(100)
+
+    def public_latency(self) -> dict:
+        end = datetime.now(timezone.utc)
+        start = end - timedelta(hours=24)
+        return {'from': start.isoformat(), 'to': end.isoformat(), 'monitors': [
+            {'id': monitor.id, 'name': monitor.name,
+             'series': latency_series(self.repository.latency_checks(monitor.id, start, end), monitor.type)}
+            for monitor in self.repository.all(enabled_only=True)]}
 
     def record_result(self, monitor: Monitor, result: CheckResult, attempted_at: str | None = None) -> None:
         current = self.repository.get(monitor.id)

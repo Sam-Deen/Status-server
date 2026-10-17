@@ -81,6 +81,136 @@ function availabilityCell(m) {
   return box;
 }
 function empty(node, message) { clear(node); node.append(el('div', 'empty-state', message)); }
+
+const latencyColours = ['#65c7c3', '#e7b95f', '#b69af7', '#e57977', '#5fc18b', '#73b5f5',
+  '#ed93cb', '#e79b68', '#c8d870', '#9bafff', '#72d9b7', '#e3a9a9', '#d8b3ed', '#a4c4df', '#c4ae72', '#b6d2ac'];
+function svgNode(tag, attributes = {}, text) {
+  const node = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  for (const [name, value] of Object.entries(attributes)) node.setAttribute(name, value);
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+function latencyNumber(value) {
+  return new Intl.NumberFormat(undefined, {maximumFractionDigits:2}).format(value);
+}
+function latencyModel(series) {
+  let maximum = 0;
+  const times = new Set();
+  for (const item of series) for (const [time, value] of item.points) {
+    if (value !== null && Number.isFinite(value)) { maximum = Math.max(maximum, value); times.add(time); }
+  }
+  return {maximum, ceiling: maximum > 0 ? maximum * 1.1 : 1, times: [...times].sort((a,b) => a-b)};
+}
+function latencyPath(points, x, y) {
+  let drawing = false;
+  const commands = [];
+  for (const [time, value] of points) {
+    if (value === null || !Number.isFinite(value)) { drawing = false; continue; }
+    const position = `${x(time).toFixed(2)} ${y(value).toFixed(2)}`;
+    commands.push(drawing ? `L${position}` : `M${position}h0.01`);
+    drawing = true;
+  }
+  return commands.join(' ');
+}
+function nearestLatencyPoint(points, time) {
+  let low = 0, high = points.length;
+  while (low < high) {
+    const mid = (low + high) >>> 1;
+    if (points[mid][0] < time) low = mid + 1; else high = mid;
+  }
+  const before = points[Math.max(0, low - 1)], after = points[Math.min(points.length - 1, low)];
+  return !before ? null : Math.abs(before[0] - time) <= Math.abs(after[0] - time) ? before : after;
+}
+function renderLatency(node, data) {
+  clear(node);
+  if (!data.monitors.length) return empty(node, 'Latency history appears after services are added.');
+  const start = new Date(data.from).getTime(), end = new Date(data.to).getTime();
+  for (const monitor of data.monitors) {
+    const card = el('article', 'latency-card');
+    const heading = el('div', 'latency-heading');
+    heading.append(el('h3', '', monitor.name));
+    const model = latencyModel(monitor.series);
+    card.append(heading);
+    node.append(card);
+    if (!model.times.length) { card.append(el('div', 'empty-state', 'No latency measurements recorded in the past 24 hours.')); continue; }
+    heading.append(el('span', 'muted numeric', `Peak ${latencyNumber(model.maximum)} ms`));
+    const viewport = el('div', 'latency-viewport');
+    const width = Math.max(320, Math.round(node.getBoundingClientRect().width || 900) - 32);
+    const height = 210, left = 72, right = width - 16, top = 18, bottom = 172;
+    const x = time => left + (time - start) / (end - start) * (right - left);
+    const y = value => bottom - value / model.ceiling * (bottom - top);
+    const chart = svgNode('svg', {viewBox:`0 0 ${width} ${height}`, role:'img', tabindex:'0',
+      'aria-label':`${monitor.name}: response latency over the past 24 hours, 0 to ${latencyNumber(model.ceiling)} milliseconds. Use left and right arrows to inspect measurements.`,
+      class:'latency-chart'});
+    chart.append(svgNode('title', {}, `${monitor.name} · Past 24 hours · Latency in milliseconds`));
+    for (let tick = 0; tick <= 4; tick++) {
+      const value = model.ceiling * tick / 4, position = y(value);
+      chart.append(svgNode('line', {x1:left, x2:right, y1:position, y2:position, class:'latency-grid'}),
+        svgNode('text', {x:left - 10, y:position + 4, 'text-anchor':'end', class:'latency-axis'}, latencyNumber(value)));
+    }
+    const timeTicks = width < 500 ? 2 : 4;
+    for (let tick = 0; tick <= timeTicks; tick++) {
+      const time = start + (end - start) * tick / timeTicks;
+      chart.append(svgNode('text', {x:x(time), y:height - 12, 'text-anchor':tick === 0 ? 'start' : tick === timeTicks ? 'end' : 'middle', class:'latency-axis'},
+        new Date(time).toLocaleTimeString(undefined, {hour:'2-digit', minute:'2-digit'})));
+    }
+    const legend = el('div', 'latency-legend');
+    monitor.series.forEach((series, index) => {
+      const colour = latencyColours[index % latencyColours.length];
+      const dash = index >= latencyColours.length ? '5 3' : 'none';
+      chart.append(svgNode('path', {d:latencyPath(series.points, x, y), fill:'none', stroke:colour,
+        'stroke-width':1.8, 'stroke-linecap':'round', 'stroke-linejoin':'round', 'stroke-dasharray':dash,
+        'vector-effect':'non-scaling-stroke', class:'latency-series'}));
+      const entry = el('span');
+      const swatch = svgNode('svg', {viewBox:'0 0 20 8', 'aria-hidden':'true'});
+      swatch.append(svgNode('line', {x1:0, x2:20, y1:4, y2:4, stroke:colour, 'stroke-width':2, 'stroke-dasharray':dash}));
+      entry.append(swatch, el('span', '', series.label)); legend.append(entry);
+    });
+    const cursor = svgNode('line', {x1:left, x2:left, y1:top, y2:bottom, class:'latency-cursor', visibility:'hidden'});
+    chart.append(cursor);
+    const readout = el('div', 'latency-readout muted', 'Hover or focus the chart to inspect measurements. Gaps indicate missing data.');
+    let selected = model.times.length - 1;
+    const inspect = time => {
+      let low = 0, high = model.times.length - 1;
+      while (low < high) { const mid = (low + high) >>> 1; if (model.times[mid] < time) low = mid + 1; else high = mid; }
+      selected = low > 0 && time - model.times[low-1] < model.times[low] - time ? low-1 : low;
+      const selectedTime = model.times[selected];
+      cursor.setAttribute('x1', x(selectedTime)); cursor.setAttribute('x2', x(selectedTime)); cursor.setAttribute('visibility', 'visible');
+      const values = monitor.series.map(series => {
+        const point = nearestLatencyPoint(series.points, selectedTime);
+        return series.label + ': ' + (point && point[0] === selectedTime && point[1] !== null ? latencyNumber(point[1]) + ' ms' : 'not recorded');
+      });
+      readout.textContent = stamp(new Date(selectedTime).toISOString()) + ' · ' + values.join(' · ');
+    };
+    chart.addEventListener('pointermove', event => {
+      const bounds = chart.getBoundingClientRect();
+      const position = (event.clientX - bounds.left) / bounds.width * width;
+      inspect(start + Math.max(0, Math.min(1, (position - left) / (right - left))) * (end - start));
+    });
+    chart.addEventListener('focus', () => inspect(model.times[selected]));
+    chart.addEventListener('keydown', event => {
+      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+      event.preventDefault();
+      const next = event.key === 'Home' ? 0 : event.key === 'End' ? model.times.length - 1 : selected + (event.key === 'ArrowLeft' ? -1 : 1);
+      inspect(model.times[Math.max(0, Math.min(model.times.length - 1, next))]);
+    });
+    viewport.append(chart); card.append(viewport, legend, readout);
+  }
+}
+let latencyData = null;
+async function refreshLatency() {
+  try {
+    latencyData = await api('/api/latency');
+    renderLatency($('latency-charts'), latencyData);
+  } catch (err) {
+    if (!latencyData) empty($('latency-charts'), 'Latency history is temporarily unavailable.');
+    else {
+      const notice = el('div', 'latency-error muted', 'Latency history could not be refreshed. Showing the last loaded measurements.');
+      const previous = $('latency-charts').querySelector('.latency-error');
+      if (!previous) $('latency-charts').prepend(notice);
+    }
+  }
+}
 async function api(path, options = {}) {
   const headers = {...options.headers};
   if (options.body) headers['Content-Type'] = 'application/json';
@@ -208,7 +338,7 @@ function route() {
   const admin = location.pathname === '/admin';
   $('overview-view').hidden = admin; $('admin-view').hidden = !admin;
   $('public-link').classList.toggle('active',!admin); $('admin-link').classList.toggle('active',admin);
-  if (admin) loadAdmin(); else refreshPublic();
+  if (admin) loadAdmin(); else { refreshPublic(); refreshLatency(); }
 }
 async function loadAdmin() {
   try {
@@ -354,5 +484,10 @@ $('monitor-form').addEventListener('submit',async event=>{
     {method:editing?'PUT':'POST',body:JSON.stringify(data)});f.hidden=true;editing=null;await refreshAdmin();}
   catch(err){$('monitor-message').textContent=err.message;}
 });
-route();setInterval(()=>{if(location.pathname==='/')refreshPublic();},15000);
+route();setInterval(()=>{if(location.pathname==='/'){refreshPublic();refreshLatency();}},15000);
 setInterval(updateLastChecked,1000);
+let latencyResize;
+window.addEventListener('resize', () => {
+  clearTimeout(latencyResize);
+  latencyResize = setTimeout(() => { if (latencyData && location.pathname === '/') renderLatency($('latency-charts'), latencyData); }, 150);
+});

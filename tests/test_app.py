@@ -204,6 +204,7 @@ class StatusTests(unittest.TestCase):
             db.execute("""CREATE TABLE checks (id INTEGER PRIMARY KEY,monitor_id INTEGER NOT NULL,
                        checked_at TEXT NOT NULL,success INTEGER NOT NULL,response_ms INTEGER,status TEXT NOT NULL)""")
             db.execute("INSERT INTO checks(monitor_id,checked_at,success,status) VALUES(1,'2026-10-07T12:00:00+00:00',1,'operational')")
+        db.close()
         Database(legacy).initialize()
         repo = MonitorRepository(Database(legacy))
         self.assertEqual(repo.get(1).name, "Legacy")

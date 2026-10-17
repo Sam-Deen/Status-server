@@ -5,6 +5,7 @@ Status Server is a self hosted status page for HTTP, HTTPS, TCP, and Docker cont
 ## Features and monitor types
 
 - Public, automatically updating status page with response times, recent incidents, and 90 eight-hour history blocks across the last 30 days. Each block shows the worst observed status, so brief outages remain visible after recovery.
+- Per-service response latency charts cover the past 24 hours, including healthy checks. Component latencies overlap in different colours with a legend; each chart ranges from zero to 10% above its highest recorded latency. Hover or use the arrow keys to inspect values. Missing measurements and monitoring gaps break the lines.
 - Administrator controls for adding, editing, disabling, and deleting monitors.
 - HTTP and HTTPS checks: GET request; 2xx and 3xx are healthy, redirects are not followed.
 - TCP checks: verifies that a connection opens to `host:port`.
@@ -133,7 +134,7 @@ python3 -m unittest discover -s tests -v
 
 The example password is for local development only. Use Compose to test Docker monitoring because local Python cannot resolve the private `docker_proxy` hostname. The tests use temporary SQLite databases, local sockets, and fake Docker responses; they do not need real homelab containers. The frontend is plain files in `static/`.
 
-With Node installed, run the incident rendering checks with `node --test tests/test_incidents_ui.js`.
+With Node installed, run the frontend rendering checks with `node --test tests/test_incidents_ui.js tests/test_latency_ui.js`.
 
 ## Troubleshooting
 

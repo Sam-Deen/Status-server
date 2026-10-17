@@ -139,6 +139,8 @@ class RequestHandler(BaseHTTPRequestHandler):
             return self.send_json(200 if healthy else 503, {"ok": healthy})
         if path == "/api/status":
             return self.send_json(200, self.server.service.public_status())
+        if path == "/api/latency":
+            return self.send_json(200, self.server.service.public_latency())
         if path == "/api/admin/me":
             session = self.server.auth.authenticate(self.headers.get("Cookie", ""))
             return self.send_json(200, {"authenticated": bool(session), "csrf": session.csrf if session else None})

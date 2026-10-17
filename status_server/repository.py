@@ -274,6 +274,15 @@ class MonitorRepository:
                 row["application_health"] = json.loads(row["application_health"]) if row["application_health"] else None
             return output
 
+    def latency_checks(self, monitor_id: int, start: datetime, end: datetime) -> list[dict]:
+        """Read the full chart window, independently of the admin history limit."""
+        with self.database.connection() as db:
+            rows = db.execute("""SELECT checked_at,response_ms,application_health,valid_until,
+                                        interval_seconds,stale_after_seconds,monitor_type,docker_state
+                                 FROM checks WHERE monitor_id=? AND checked_at>=? AND checked_at<=?
+                                 ORDER BY checked_at,id""", (monitor_id, start.isoformat(), end.isoformat()))
+            return [dict(row) for row in rows]
+
     def availability(self, monitor_id: int, start: datetime, end: datetime) -> dict:
         from .availability import measured_availability
         with self.database.connection() as db:
